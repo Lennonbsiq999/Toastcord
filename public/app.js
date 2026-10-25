@@ -574,7 +574,7 @@ async function toggleScreenShare() {
   } catch(e){toast(`Bildschirmfreigabe abgebrochen: ${e.message}`,'error');}
 }
 function leaveVoice(notify=true) {
-  const channelId=state.voiceChannelId;if(channelId&&notify){sendWs({type:'leave_voice',channelId});api('/api/voice/leave',{method:'POST',body:{channelId}}).catch(()=>{});}
+  const channelId=state.voiceChannelId;if(channelId){if(notify)sendWs({type:'leave_voice',channelId});api('/api/voice/leave',{method:'POST',body:{channelId}}).catch(()=>{});}
   for(const track of state.localStream?.getTracks()||[])track.stop();for(const track of state.screenStream?.getTracks()||[])track.stop();
   for(const {pc} of state.peerConnections.values())pc.close();state.peerConnections.clear();state.remoteStreams.clear();state.pendingIce.clear();state.localStream=null;state.screenStream=null;state.voiceChannelId='';state.muted=false;
   if(channelId){state.voiceParticipants[channelId]=(state.voiceParticipants[channelId]||[]).filter(p=>p.userId!==state.me?.id);}render();
