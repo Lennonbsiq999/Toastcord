@@ -32,7 +32,8 @@ export function createDefaultState() {
     threads: [],
     messages: [],
     voiceSessions: [],
-    invites: []
+    invites: [],
+    auditLog: []
   };
 }
 
@@ -156,7 +157,7 @@ class JsonStore {
     return this.state.memberships.find(m => m.serverId === serverId && m.userId === userId)?.role || 'member';
   }
   isMember(serverId, userId) {
-    return serverId === 'toast-zone' || this.role(serverId, userId) !== 'member' || this.state.memberships.some(m => m.serverId === serverId && m.userId === userId);
+    return this.state.servers.some(s => s.id === serverId && s.ownerId === userId) || this.state.memberships.some(m => m.serverId === serverId && m.userId === userId);
   }
   joinServer(serverId, userId) {
     if (!this.state.memberships.some(m => m.serverId === serverId && m.userId === userId)) {
@@ -204,6 +205,12 @@ function broadcast(message, filter = () => true) {
 function sendVoiceState(store, serverId, channelId) {
   const participants = store.state.voiceSessions.filter(s => s.channelId === channelId).map(s => ({ userId: s.userId, displayName: store.userById(s.userId)?.displayName || 'Mitglied', channelId: s.channelId }));
   broadcast({ type: 'voice_state', serverId, channelId, participants }, c => c.userId && store.isMember(serverId, c.userId));
+}
+function recordAdminAction(store, { serverId, actorId, action, targetId = '', details = '' }) {
+  store.state.auditLog ||= [];
+  store.state.auditLog.push({ id: newId('audit_'), serverId, actorId, action, targetId, details: String(details).slice(0, 240), createdAt: Date.now() });
+  if (store.state.auditLog.length > 250) store.state.auditLog.splice(0, store.state.auditLog.length - 250);
+  store.flush();
 }
 function closeWs(client) {
   if (!client || client.closed) return;
@@ -370,7 +377,6 @@ export function createAppServer(options = {}) {
           sendJson(res, 200, { iceServers, turnConfigured: iceServers.length > 1 }); return;
         }
         if (pathname === '/api/bootstrap' && req.method === 'GET') {
-          if (!store.state.memberships.some(m => m.serverId === 'toast-zone' && m.userId === user.id)) store.update(state => { state.memberships.push({id:newId('mem_'),serverId:'toast-zone',userId:user.id,role:'member',joinedAt:Date.now()}); });
           const servers = store.userServers(user.id);
           const serverIds = new Set(servers.map(s => s.id));
           const channels = store.state.channels.filter(c => serverIds.has(c.serverId));
