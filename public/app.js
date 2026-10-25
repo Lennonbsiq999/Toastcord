@@ -11,8 +11,9 @@ const state = {
   peerConnections: new Map(), remoteStreams: new Map(), pendingIce: new Map(),
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }], turnConfigured: false,
   muted: false, focusMode: false, bookmarks: new Set(), notes: '',
-  onlineIds: new Set(), messageSearch: '',
+  onlineIds: new Set(), messageSearch: '', reactionTargetMessageId: '',
 };
+const REACTION_EMOJIS = ['👍','❤️','😂','🔥','🎉','🍞','👀','🤔','💀','🚀'];
 let pendingSubmit = false;
 
 function esc(value) {
@@ -111,7 +112,10 @@ function renderMessage(message) {
   const mine = message.authorId === state.me?.id;
   const bookmarked = state.bookmarks.has(message.id);
   const text = esc(message.text).replace(/\n/g,'<br>');
-  return `<article class="message" data-message-id="${esc(message.id)}">${avatar(author,true,false)}<div class="message-body"><div class="message-meta"><b>${esc(author.displayName)}</b><time>${fmtTime(message.createdAt)}</time></div><div class="message-text">${text}${message.editedAt?'<span class="edited">(bearbeitet)</span>':''}</div></div><div class="message-actions"><button data-action="bookmark" data-id="${esc(message.id)}" title="${bookmarked?'Lesezeichen entfernen':'Merken'}">${bookmarked?'★':'☆'}</button>${mine?`<button data-action="edit-message" data-id="${esc(message.id)}" title="Bearbeiten">✎</button><button data-action="delete-message" data-id="${esc(message.id)}" title="Löschen">×</button>`:''}</div></article>`;
+  const reactions = Object.entries(message.reactions || {}).filter(([emoji, users]) => REACTION_EMOJIS.includes(emoji) && Array.isArray(users) && users.length);
+  const reactionChips = reactions.map(([emoji, users]) => `<button class="reaction-chip ${users.includes(state.me?.id)?'active':''}" data-action="react" data-id="${esc(message.id)}" data-emoji="${emoji}" title="${users.length} Reaktion(en)">${emoji}<span>${users.length}</span></button>`).join('');
+  const reactionPicker = state.reactionTargetMessageId===message.id ? `<div class="reaction-picker" role="group" aria-label="Emoji-Reaktion auswählen">${REACTION_EMOJIS.map(emoji=>`<button data-action="choose-reaction" data-id="${esc(message.id)}" data-emoji="${emoji}" aria-label="Mit ${emoji} reagieren">${emoji}</button>`).join('')}</div>` : '';
+  return `<article class="message" data-message-id="${esc(message.id)}">${avatar(author,true,false)}<div class="message-body"><div class="message-meta"><b>${esc(author.displayName)}</b><time>${fmtTime(message.createdAt)}</time></div><div class="message-text">${text}${message.editedAt?'<span class="edited">(bearbeitet)</span>':''}</div><div class="message-reactions">${reactionChips}<button class="reaction-add" data-action="add-reaction" data-id="${esc(message.id)}" title="Reaktion hinzufügen" aria-label="Reaktion hinzufügen">＋</button></div>${reactionPicker}</div><div class="message-actions"><button data-action="bookmark" data-id="${esc(message.id)}" title="${bookmarked?'Lesezeichen entfernen':'Merken'}">${bookmarked?'★':'☆'}</button>${mine?`<button data-action="edit-message" data-id="${esc(message.id)}" title="Bearbeiten">✎</button><button data-action="delete-message" data-id="${esc(message.id)}" title="Löschen">×</button>`:''}</div></article>`;
 }
 function renderDirectMessageChat() {
   const thread=state.threads.find(t=>t.id===state.activeThreadId);
@@ -267,6 +271,11 @@ function handleWs(msg) {
   if(msg.type==='message_update') {
     const i=state.messages.findIndex(m=>m.id===msg.message.id);if(i>=0)state.messages[i]=msg.message;render();return;
   }
+  if(msg.type==='message_reaction') {
+    const relevant = msg.channelId ? state.mode==='channel' && state.activeChannelId===msg.channelId : state.mode==='dm' && state.activeThreadId===msg.threadId;
+    if(relevant) { const i=state.messages.findIndex(m=>m.id===msg.message.id); if(i>=0){state.messages[i]=msg.message;render();} }
+    return;
+  }
   if(msg.type==='message_delete') {state.messages=state.messages.filter(m=>m.id!==msg.messageId);render();return;}
   if(msg.type==='member_update'||msg.type==='profile_update'||msg.type==='presence_update') {refreshMembers().then(render);return;}
   if(msg.type==='channel_update') {loadBootstrapSoft();return;}
@@ -339,6 +348,14 @@ async function deleteMessage(id) {
 }
 function toggleBookmark(id) {
   if(state.bookmarks.has(id))state.bookmarks.delete(id);else state.bookmarks.add(id);persistBookmarks();render();
+}
+async function toggleReaction(id, emoji) {
+  if(!REACTION_EMOJIS.includes(emoji))return;
+  try {
+    const d=await api(`/api/messages/${encodeURIComponent(id)}/reactions`,{method:'POST',body:{emoji}});
+    const i=state.messages.findIndex(m=>m.id===id);if(i>=0)state.messages[i]=d.message;
+    state.reactionTargetMessageId='';render();
+  } catch(e) {toast(e.message,'error');}
 }
 function exportChat() {
   const channel=currentChannel();const content=[`Toastcord · ${currentServer()?.name||''} / ${channel?.name||''}`,`Export am ${new Date().toLocaleString('de-DE')}`,'',...state.messages.map(m=>`[${new Date(m.createdAt).toLocaleString('de-DE')}] ${m.author?.displayName||'Mitglied'}: ${m.text}`)].join('\n');
@@ -459,6 +476,8 @@ function handleClick(event) {
   if(action==='members-toggle'){const panel=$('.members-panel');if(panel){panel.style.display=panel.style.display==='none'?'':'none';}return;}
   if(action==='emoji'){const input=$('#composer-input');if(input){const start=input.selectionStart;const value=input.value;input.value=value.slice(0,start)+' 🍞 '+value.slice(start);input.focus();input.selectionStart=input.selectionEnd=start+3;state.draft=input.value;}return;}
   if(action==='bookmark'){toggleBookmark(el.dataset.id);return;}
+  if(action==='add-reaction'){state.reactionTargetMessageId=state.reactionTargetMessageId===el.dataset.id?'':el.dataset.id;render();return;}
+  if(action==='react'||action==='choose-reaction'){toggleReaction(el.dataset.id,el.dataset.emoji);return;}
   if(action==='edit-message'){const message=state.messages.find(m=>m.id===el.dataset.id);state.modal='edit-message';state.modalData={message};render();return;}
   if(action==='delete-message'){deleteMessage(el.dataset.id);return;}
   if(action==='voice-join'){startVoice(el.dataset.id);return;}
