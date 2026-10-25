@@ -223,8 +223,10 @@ function closeWs(client) {
       client.store.state.voiceSessions.splice(idx, 1);
       try { client.store.flush(); } catch (err) { console.error('Unable to persist voice leave', err); }
       sendVoiceState(client.store, serverId, voice);
+      broadcast({type:'member_update',serverId},c=>client.store.isMember(serverId,c.userId));
     }
   }
+  for (const membership of client.store.state.memberships.filter(m=>m.userId===client.userId)) broadcast({type:'member_update',serverId:membership.serverId},c=>client.store.isMember(membership.serverId,c.userId));
   try { client.socket.end(Buffer.from([0x88, 0x00])); } catch {}
 }
 function handleWsText(client, text) {
@@ -236,12 +238,17 @@ function handleWsText(client, text) {
     const channelId = String(msg.channelId || '');
     const channel = store.state.channels.find(c => c.id === channelId && c.kind === 'voice');
     if (!channel || !store.isMember(channel.serverId, client.userId)) { sendWs(client, { type: 'error', message: 'Du hast keinen Zugriff auf diesen Sprachkanal.' }); return; }
+    const oldSessions = store.state.voiceSessions.filter(s => s.userId === client.userId && s.channelId !== channelId);
+    store.state.voiceSessions = store.state.voiceSessions.filter(s => !(s.userId === client.userId && s.channelId !== channelId));
     const current = store.state.voiceSessions.findIndex(s => s.userId === client.userId && s.channelId === channelId);
     const row = { userId: client.userId, channelId, serverId: channel.serverId, connectionId: client.connectionId, joinedAt: Date.now() };
     if (current >= 0) store.state.voiceSessions[current] = row; else store.state.voiceSessions.push(row);
+    for (const old of oldSessions) client.joinedVoice?.delete(old.channelId);
     client.joinedVoice = new Set([...(client.joinedVoice || []), channelId]);
     store.flush();
+    for (const old of oldSessions) sendVoiceState(store,old.serverId,old.channelId);
     sendVoiceState(store, channel.serverId, channelId);
+    broadcast({type:'member_update',serverId:channel.serverId},c=>store.isMember(channel.serverId,c.userId));
     return;
   }
   if (msg.type === 'leave_voice') {
@@ -250,7 +257,7 @@ function handleWsText(client, text) {
     const serverId = idx >= 0 ? store.state.voiceSessions[idx].serverId : '';
     if (idx >= 0) { store.state.voiceSessions.splice(idx, 1); store.flush(); }
     client.joinedVoice?.delete(channelId);
-    if (serverId) sendVoiceState(store, serverId, channelId);
+    if (serverId) { sendVoiceState(store, serverId, channelId); broadcast({type:'member_update',serverId},c=>store.isMember(serverId,c.userId)); }
     return;
   }
   if (msg.type === 'rtc_signal') {
@@ -292,6 +299,7 @@ function attachWebSocket(server, store) {
     liveSockets.add(client);
     for (const v of store.state.voiceSessions.filter(v => v.userId === user.id)) client.joinedVoice.add(v.channelId);
     sendWs(client, { type: 'connected', user: store.safeUser(user) });
+    for (const membership of store.state.memberships.filter(m=>m.userId===user.id)) broadcast({type:'member_update',serverId:membership.serverId},c=>store.isMember(membership.serverId,c.userId));
     socket.on('data', chunk => {
       client.buffer = Buffer.concat([client.buffer, chunk]);
       while (client.buffer.length >= 2) {
