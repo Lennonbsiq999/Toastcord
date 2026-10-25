@@ -316,7 +316,7 @@ async function refreshLiveState() {
         }
       }
     }
-    if(shouldRender)render();
+    if(shouldRender&&!state.modal)render();
   } catch(e) { console.debug('Live sync failed; retrying',e); }
   finally {liveSyncBusy=false;}
 }
@@ -371,7 +371,7 @@ function connectWs() {
       state.wsReady=true;state.wsReconnect=800;
       if(state.voiceChannelId) sendWs({type:'join_voice',channelId:state.voiceChannelId});
       state.servers.forEach(s=>refreshMembers().catch(()=>{}));
-      refreshView().catch(()=>{});
+      if(!state.modal)refreshView().catch(()=>{});
       render();
     });
     ws.addEventListener('message',event=>{let msg;try{msg=JSON.parse(event.data);}catch{return;}handleWs(msg);});
@@ -383,22 +383,22 @@ function sendWs(data) { if(state.ws?.readyState===WebSocket.OPEN)state.ws.send(J
 function handleWs(msg) {
   if(msg.type==='connected'){state.wsReady=true;render();return;}
   if(msg.type==='pong')return;
-  if(msg.type==='dm_message_new'&&state.mode==='dm'&&msg.threadId===state.activeThreadId){if(!state.messages.some(m=>m.id===msg.message.id))state.messages.push(msg.message);render();return;}
+  if(msg.type==='dm_message_new'&&state.mode==='dm'&&msg.threadId===state.activeThreadId){if(!state.messages.some(m=>m.id===msg.message.id))state.messages.push(msg.message);if(!state.modal)render();return;}
   if(msg.type==='message_new'&&state.mode==='channel'&&msg.channelId===state.activeChannelId) {
     if(!state.messages.some(m=>m.id===msg.message.id))state.messages.push(msg.message);
     if(state.messages.length>200)state.messages=state.messages.slice(-200);
-    render();return;
+    if(!state.modal)render();return;
   }
   if(msg.type==='message_update') {
-    const i=state.messages.findIndex(m=>m.id===msg.message.id);if(i>=0)state.messages[i]=msg.message;render();return;
+    const i=state.messages.findIndex(m=>m.id===msg.message.id);if(i>=0)state.messages[i]=msg.message;if(!state.modal)render();return;
   }
   if(msg.type==='message_reaction') {
     const relevant = msg.channelId ? state.mode==='channel' && state.activeChannelId===msg.channelId : state.mode==='dm' && state.activeThreadId===msg.threadId;
-    if(relevant) { const i=state.messages.findIndex(m=>m.id===msg.message.id); if(i>=0){state.messages[i]=msg.message;render();} }
+    if(relevant) { const i=state.messages.findIndex(m=>m.id===msg.message.id); if(i>=0){state.messages[i]=msg.message;if(!state.modal)render();} }
     return;
   }
-  if(msg.type==='message_delete') {state.messages=state.messages.filter(m=>m.id!==msg.messageId);render();return;}
-  if(msg.type==='member_update'||msg.type==='profile_update'||msg.type==='presence_update') {refreshMembers().then(render);return;}
+  if(msg.type==='message_delete') {state.messages=state.messages.filter(m=>m.id!==msg.messageId);if(!state.modal)render();return;}
+  if(msg.type==='member_update'||msg.type==='profile_update'||msg.type==='presence_update') {refreshMembers().then(()=>{if(!state.modal)render();});return;}
   if(msg.type==='channel_update'||msg.type==='server_update') {loadBootstrapSoft();return;}
   if(msg.type==='server_kicked') {
     state.servers=state.servers.filter(s=>s.id!==msg.serverId);state.channels=state.channels.filter(c=>c.serverId!==msg.serverId);
@@ -408,12 +408,12 @@ function handleWs(msg) {
   if(msg.type==='voice_state') {
     state.voiceParticipants[msg.channelId]=msg.participants||[];
     if(state.voiceChannelId===msg.channelId) syncVoicePeers(msg.participants||[]);
-    render();return;
+    if(!state.modal)render();return;
   }
   if(msg.type==='rtc_signal') {handleRtcSignal(msg).catch(e=>console.debug('RTC signal',e));return;}
   if(msg.type==='error')toast(msg.message||'Live-Verbindungsfehler','error');
 }
-async function loadBootstrapSoft() { try {const d=await api('/api/bootstrap');state.servers=d.servers||[];state.channels=d.channels||[];refreshMembers().then(render);render();}catch{} }
+async function loadBootstrapSoft() { try {const d=await api('/api/bootstrap');state.servers=d.servers||[];state.channels=d.channels||[];refreshMembers().then(()=>{if(!state.modal)render();});if(!state.modal)render();}catch{} }
 async function switchServer(id) {
   if(!state.servers.some(s=>s.id===id))return;state.mode='channel';state.activeServerId=id;
   const ch=state.channels.find(c=>c.serverId===id&&c.kind==='text')||state.channels.find(c=>c.serverId===id);
