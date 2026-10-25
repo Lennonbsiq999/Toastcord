@@ -10,7 +10,7 @@ const state = {
   voiceParticipants: {}, voiceChannelId: '', localStream: null, screenStream: null,
   peerConnections: new Map(), remoteStreams: new Map(), pendingIce: new Map(),
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }], turnConfigured: false,
-  muted: false, focusMode: false, bookmarks: new Set(), notes: '',
+  muted: false, focusMode: false, bookmarks: new Set(), notes: '', theme: 'toast',
   onlineIds: new Set(), messageSearch: '', reactionTargetMessageId: '',
 };
 const REACTION_EMOJIS = ['👍','❤️','😂','🔥','🎉','🍞','👀','🤔','💀','🚀'];
@@ -49,6 +49,9 @@ function loadLocalPrefs() {
   try { state.bookmarks = new Set(JSON.parse(saved('bookmarks','[]'))); } catch { state.bookmarks = new Set(); }
   state.notes = saved('notes','');
   state.focusMode = saved('focus','false') === 'true';
+  const theme = saved('theme','toast');
+  state.theme = ['toast','neon','ocean','ember'].includes(theme) ? theme : 'toast';
+  document.documentElement.dataset.theme = state.theme;
 }
 function persistBookmarks() { save('bookmarks', JSON.stringify([...state.bookmarks])); }
 
@@ -195,7 +198,8 @@ function renderToastLab() {
     <div class="lab-card"><div class="lab-icon">⌘</div><h3>Chat-Befehle</h3><p><code>/help</code>, <code>/roll</code>, <code>/flip</code>, <code>/shrug</code> und <code>/poll Frage | Option A | Option B</code></p><button data-action="command-help">Befehle anzeigen</button></div>
     <div class="lab-card"><div class="lab-icon">⇩</div><h3>Chat exportieren</h3><p>Lade die Nachrichten aus diesem Kanal als Textdatei herunter.</p><button data-action="export-chat">.txt exportieren</button></div>
     <div class="lab-card"><div class="lab-icon">☾</div><h3>Fokusmodus</h3><p>Reduziere Ablenkungen und konzentriere dich auf den aktuellen Kanal.</p><button data-action="focus-mode">${state.focusMode?'Fokusmodus deaktivieren':'Fokusmodus aktivieren'}</button></div>
-    <div class="lab-card"><div class="lab-icon">⌁</div><h3>Systemstatus</h3><p>Verbindung, Server und Audio-Konfiguration prüfen.</p><div id="lab-status">WebSocket: ${state.wsReady?'verbunden':'nicht verbunden'}<br>TURN: ${state.turnConfigured?'konfiguriert':'nicht konfiguriert'}</div><button data-action="check-status">Status aktualisieren</button></div>
+    <div class="lab-card"><div class="lab-icon">🎨</div><h3>Look &amp; Feel</h3><p>Vier Looks, lokal gespeichert. Nur dein Browser wird umgestylt.</p><div class="theme-choices">${[['toast','🍞 Toast'],['neon','⚡ Neon'],['ocean','🌊 Ocean'],['ember','🔥 Ember']].map(([key,label])=>`<button class="theme-choice ${state.theme===key?'active':''}" data-action="theme-preset" data-theme-choice="${key}" aria-pressed="${state.theme===key}">${label}</button>`).join('')}</div></div>
+     <div class="lab-card"><div class="lab-icon">⌁</div><h3>Systemstatus</h3><p>Verbindung, Server und Audio-Konfiguration prüfen.</p><div id="lab-status">WebSocket: ${state.wsReady?'verbunden':'nicht verbunden'}<br>TURN: ${state.turnConfigured?'konfiguriert':'nicht konfiguriert'}</div><button data-action="check-status">Status aktualisieren</button></div>
     <div class="lab-card"><div class="lab-icon">☺</div><h3>Schnellantwort</h3><p>Füge eine kurze Standardantwort in den Chat ein.</p><button data-action="quick-reply" data-text="Bin gleich da!">Bin gleich da</button><button data-action="quick-reply" data-text="Klingt gut, bin dabei.">Bin dabei</button></div>
     <div class="lab-card"><div class="lab-icon">▤</div><h3>Umfrage vorbereiten</h3><p>Erzeuge eine Chat-Umfrage mit Optionen.</p><div class="field"><input id="poll-question" placeholder="Frage" /></div><div class="field"><input id="poll-options" placeholder="Optionen, durch Kommas getrennt" /></div><button data-action="make-poll">Umfrage in Chat einfügen</button></div>
   </div>`,true);
@@ -489,6 +493,7 @@ function handleClick(event) {
   if(action==='command-help'){const input=$('#composer-input');state.modal='';render();if(input){input.focus();state.draft='/help';input.value='/help';}toast('Befehle: /help, /roll, /flip, /shrug und /poll Frage | Option A | Option B');return;}
   if(action==='export-chat'){exportChat();return;}
   if(action==='focus-mode'){state.focusMode=!state.focusMode;save('focus',state.focusMode);render();toast(state.focusMode?'Fokusmodus aktiviert.':'Fokusmodus deaktiviert.');return;}
+  if(action==='theme-preset'){const theme=el.dataset.themeChoice;if(['toast','neon','ocean','ember'].includes(theme)){state.theme=theme;save('theme',theme);document.documentElement.dataset.theme=theme;render();toast(({toast:'Toast-Theme aktiviert.',neon:'Neon-Theme aktiviert.',ocean:'Ocean-Theme aktiviert.',ember:'Ember-Theme aktiviert.'})[theme],'success');}return;}
   if(action==='check-status'){const status=$('#lab-status');if(status)status.innerHTML=`WebSocket: ${state.wsReady?'verbunden':'nicht verbunden'}<br>REST: erreichbar<br>TURN: ${state.turnConfigured?'konfiguriert':'nicht konfiguriert'}`;return;}
   if(action==='quick-reply'){const text=el.dataset.text||'';state.modal='';render();const input=$('#composer-input');if(input){input.value=text;state.draft=text;input.focus();}return;}
   if(action==='make-poll'){const q=$('#poll-question')?.value?.trim();const opts=($('#poll-options')?.value||'').split(',').map(v=>v.trim()).filter(Boolean);if(!q||opts.length<2){toast('Gib eine Frage und mindestens zwei Optionen ein.','error');return;}state.modal='';render();sendMessage(`📊 ${q}\n${opts.map((v,i)=>`${i+1}. ${v}`).join('\n')}\nAntworte mit deiner Nummer.`);return;}
