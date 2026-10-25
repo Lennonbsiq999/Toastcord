@@ -12,7 +12,9 @@ const state = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }], turnConfigured: false,
   muted: false, focusMode: false, bookmarks: new Set(), notes: '', theme: 'toast',
   onlineIds: new Set(), messageSearch: '', reactionTargetMessageId: '',
+  adminData: null, adminLoading: false, adminError: '',
 };
+let liveSyncTimer = null, liveSyncBusy = false, lastVoiceSyncAt = 0;
 const REACTION_EMOJIS = ['👍','❤️','😂','🔥','🎉','🍞','👀','🤔','💀','🚀'];
 let pendingSubmit = false;
 
@@ -98,7 +100,7 @@ function renderChannelPanel() {
   const text = channels.filter(c=>c.kind==='text'); const voice = channels.filter(c=>c.kind==='voice');
   const canManage = ['owner','admin'].includes(server?.role || 'member');
   return `<aside class="channel-panel">
-    <div class="channel-head"><strong>${esc(server?.name || 'Toastcord')}</strong><button class="icon-button" data-action="server-menu" title="Server">⌄</button></div>
+    <div class="channel-head"><strong>${esc(server?.name || 'Toastcord')}</strong>${canManage?'<button class="icon-button admin-shortcut" data-action="admin-panel" title="Admin-Panel">⚙</button>':''}<button class="icon-button" data-action="server-menu" title="Server">⌄</button></div>
     <div class="channel-scroll">
       <div class="channel-about"><div class="server-name">${esc(server?.name || 'Community')}</div><p>${esc(server?.description || 'Dein Raum für Gespräche und gemeinsame Projekte.')}</p><button class="small-action" data-action="invite">Einladung teilen ↗</button></div>
       <div class="group-label">Textkanäle ${canManage?'<button data-action="modal" data-modal="create-channel" data-kind="text" title="Textkanal hinzufügen">+</button>':''}</div>
@@ -187,6 +189,7 @@ function renderModal() {
   if (state.modal==='profile') return modalShell('Dein Profil',`<form id="profile-form"><div class="field"><label for="profile-name">Anzeigename</label><input id="profile-name" name="displayName" required minlength="2" maxlength="32" value="${esc(state.me.displayName)}" /></div><div class="field"><label for="profile-status">Status</label><select id="profile-status" name="status"><option value="online" ${state.me.status==='online'?'selected':''}>Online</option><option value="idle" ${state.me.status==='idle'?'selected':''}>Abwesend</option><option value="dnd" ${state.me.status==='dnd'?'selected':''}>Nicht stören</option><option value="invisible" ${state.me.status==='invisible'?'selected':''}>Unsichtbar</option></select></div><div id="modal-error" class="auth-error" hidden></div><button class="primary-btn" type="submit">Änderungen speichern</button></form><div style="margin-top:12px"><button class="secondary-btn" data-action="logout" style="width:100%">Abmelden</button></div>`);
   if (state.modal==='edit-message') return modalShell('Nachricht bearbeiten',`<form id="edit-message-form"><div class="field"><label for="edit-text">Nachricht</label><textarea id="edit-text" name="text" required maxlength="2000" rows="5">${esc(state.modalData.message?.text||'')}</textarea></div><div id="modal-error" class="auth-error" hidden></div><button class="primary-btn" type="submit">Speichern</button></form>`);
   if (state.modal==='toastlab') return renderToastLab();
+  if (state.modal==='admin-panel') return renderAdminPanel();
   return '';
 }
 function modalShell(title,body,wide=false) { return `<div class="modal-backdrop" data-action="modal-backdrop"><section class="modal ${wide?'wide':''}" role="dialog" aria-modal="true"><header class="modal-head"><h2>${esc(title)}</h2><button class="icon-button" data-action="close-modal" aria-label="Schließen">×</button></header><div class="modal-body">${body}</div></section></div>`; }
@@ -203,6 +206,119 @@ function renderToastLab() {
     <div class="lab-card"><div class="lab-icon">☺</div><h3>Schnellantwort</h3><p>Füge eine kurze Standardantwort in den Chat ein.</p><button data-action="quick-reply" data-text="Bin gleich da!">Bin gleich da</button><button data-action="quick-reply" data-text="Klingt gut, bin dabei.">Bin dabei</button></div>
     <div class="lab-card"><div class="lab-icon">▤</div><h3>Umfrage vorbereiten</h3><p>Erzeuge eine Chat-Umfrage mit Optionen.</p><div class="field"><input id="poll-question" placeholder="Frage" /></div><div class="field"><input id="poll-options" placeholder="Optionen, durch Kommas getrennt" /></div><button data-action="make-poll">Umfrage in Chat einfügen</button></div>
   </div>`,true);
+}
+
+async function renderAdminPanel() {
+  if (state.adminLoading) return modalShell('Admin-Panel · '+(currentServer()?.name||'Server'), '<div class="admin-loading"><div class="loading-line"><span></span></div><p>Serverdaten werden geladen…</p></div>', true);
+  if (state.adminError || !state.adminData) return modalShell('Admin-Panel', '<div class="system-banner admin-error-banner">'+esc(state.adminError||'Noch keine Serverdaten geladen.')+'</div><button class="primary-btn" data-action="admin-refresh">Erneut versuchen</button>', true);
+  const data=state.adminData, server=data.server, owner=server.role==='owner';
+  const stat=(label,value,icon)=>'<div class="admin-stat"><span>'+icon+'</span><small>'+label+'</small><strong>'+value+'</strong></div>';
+  const roleText=role=>role==='owner'?'Owner':role==='admin'?'Admin':'Mitglied';
+  const memberRows=data.members.map(m=>{
+    const self=m.userId===state.me?.id, isOwner=m.role==='owner';
+    const roleControls=owner&&!self&&!isOwner
+      ? '<button class="admin-mini-btn" data-action="admin-role" data-id="'+esc(m.userId)+'" data-role="'+(m.role==='admin'?'member':'admin')+'">'+(m.role==='admin'?'Admin entfernen':'Zum Admin machen')+'</button>'
+      : '';
+    const canKick=!self&&!isOwner&&(owner||m.role==='member');
+    return '<div class="admin-member-row">'+avatar(m,true,m.online)+'<div class="admin-member-info"><b>'+esc(m.displayName)+(self?' (du)':'')+'</b><small>@'+esc(m.username||'user')+' · '+roleText(m.role)+' · '+(m.voice?'Im Sprachkanal':m.online?'Online':'Offline')+'</small></div><div class="admin-member-actions">'+roleControls+(canKick?'<button class="admin-mini-btn danger" data-action="admin-kick" data-id="'+esc(m.userId)+'">Entfernen</button>':'')+'</div></div>';
+  }).join('') || '<p class="members-empty">Keine Mitglieder.</p>';
+  const messageRows=data.messages.map(m=>'<div class="admin-message-row"><div><b>'+esc(m.author?.displayName||'Mitglied')+'</b><small>#'+esc(m.channelName||'Kanal')+' · '+fmtTime(m.createdAt)+'</small><p>'+esc(m.text.slice(0,180))+'</p></div><button class="admin-mini-btn danger" data-action="admin-delete-message" data-id="'+esc(m.id)+'">Löschen</button></div>').join('') || '<p class="members-empty">Noch keine Nachrichten zum Moderieren.</p>';
+  const auditText={server_updated:'Servereinstellungen geändert',member_kicked:'Mitglied entfernt',member_promoted:'Admin ernannt',member_demoted:'Admin-Rechte entfernt',message_deleted:'Nachricht moderiert gelöscht'};
+  const auditRows=data.auditLog.map(log=>'<div class="admin-audit-row"><span class="admin-audit-dot"></span><div><b>'+esc(auditText[log.action]||log.action)+'</b><small>'+(esc(log.actor?.displayName||'System'))+' · '+new Date(log.createdAt).toLocaleString('de-DE')+'</small>'+(log.details?'<p>'+esc(log.details)+'</p>':'')+'</div></div>').join('') || '<p class="members-empty">Noch keine Admin-Aktionen.</p>';
+  const settings=owner?'<form id="admin-server-form" class="admin-settings-form"><div class="field"><label for="admin-server-name">Servername</label><input id="admin-server-name" name="name" minlength="2" maxlength="48" required value="'+esc(server.name)+'" /></div><div class="field"><label for="admin-server-description">Beschreibung</label><input id="admin-server-description" name="description" maxlength="160" value="'+esc(server.description||'')+'" /></div><button class="primary-btn" type="submit">Server speichern</button></form>':'<p class="modal-copy">Du bist Admin. Servereinstellungen und Admin-Rollen darf nur der Owner ändern.</p>';
+  return modalShell('Admin-Panel · '+server.name,
+    '<div class="admin-toolbar"><p>Serververwaltung, Moderation und Live-Status.</p><button class="secondary-btn" data-action="admin-refresh">↻ Aktualisieren</button></div>'+
+    '<div class="admin-stats">'+stat('Mitglieder',data.stats.members,'♟')+stat('Online',data.stats.online,'●')+stat('Kanäle',data.stats.channels,'▤')+stat('Nachrichten',data.stats.messages,'✉')+stat('Im Voice',data.stats.inVoice,'♫')+'</div>'+
+    '<div class="admin-columns"><section class="admin-section"><div class="admin-section-heading"><div><h3>Mitglieder &amp; Rollen</h3><p>Admin-Rechte können nur Owner vergeben.</p></div><span>'+data.members.length+'</span></div><div class="admin-member-list">'+memberRows+'</div></section>'+
+    '<section class="admin-section"><div class="admin-section-heading"><div><h3>Servereinstellungen</h3><p>Einladungs-Code: <code>'+esc(server.inviteCode)+'</code></p></div></div>'+settings+'</section></div>'+
+    '<section class="admin-section admin-wide-section"><div class="admin-section-heading"><div><h3>Nachrichten moderieren</h3><p>Die letzten Nachrichten aus diesem Server. Gelöschte Nachrichten sind nicht mehr sichtbar.</p></div><span>'+data.messages.length+'</span></div><div class="admin-message-list">'+messageRows+'</div></section>'+
+    '<section class="admin-section admin-wide-section"><div class="admin-section-heading"><div><h3>Audit-Log</h3><p>Protokoll der letzten Admin-Aktionen.</p></div><span>'+data.auditLog.length+'</span></div><div class="admin-audit-list">'+auditRows+'</div></section>',true);
+}
+async function loadAdminPanelData() {
+  if (!state.me || !currentServer()) return;
+  state.adminLoading=true; state.adminError=''; render();
+  try { state.adminData=await api('/api/admin/overview?serverId='+encodeURIComponent(state.activeServerId)); }
+  catch(e) { state.adminData=null; state.adminError=e.message; }
+  finally { state.adminLoading=false; render(); }
+}
+async function openAdminPanel() {
+  state.modal='admin-panel'; state.adminData=null; state.adminError=''; await loadAdminPanelData();
+}
+async function changeAdminRole(userId, role) {
+  try { await api('/api/admin/members/'+encodeURIComponent(userId)+'/role',{method:'POST',body:{serverId:state.activeServerId,role}}); toast(role==='admin'?'Admin-Rechte vergeben.':'Admin-Rechte entfernt.','success'); await loadAdminPanelData(); await refreshMembers(); }
+  catch(e) { toast(e.message,'error'); }
+}
+async function kickAdminMember(userId) {
+  const member=state.adminData?.members.find(m=>m.userId===userId);
+  if(!member||!confirm(member.displayName+' wirklich vom Server entfernen?')) return;
+  try { await api('/api/admin/members/'+encodeURIComponent(userId)+'?serverId='+encodeURIComponent(state.activeServerId),{method:'DELETE'}); toast(member.displayName+' wurde vom Server entfernt.','success'); await loadAdminPanelData(); await refreshMembers(); }
+  catch(e) { toast(e.message,'error'); }
+}
+async function adminDeleteMessage(id) {
+  const message=state.adminData?.messages.find(m=>m.id===id);
+  if(!message||!confirm('Diese Nachricht als Moderator löschen?')) return;
+  try { await api('/api/admin/messages/'+encodeURIComponent(id)+'?serverId='+encodeURIComponent(state.activeServerId),{method:'DELETE'}); state.messages=state.messages.filter(m=>m.id!==id); toast('Nachricht moderiert gelöscht.','success'); await loadAdminPanelData(); render(); }
+  catch(e) { toast(e.message,'error'); }
+}
+async function saveAdminServer(form) {
+  const body=Object.fromEntries(new FormData(form).entries());
+  try {
+    const data=await api('/api/admin/server/'+encodeURIComponent(state.activeServerId),{method:'PATCH',body});
+    state.servers=state.servers.map(s=>s.id===data.server.id?data.server:s);
+    toast('Servereinstellungen gespeichert.','success');
+    await loadAdminPanelData();
+  } catch(e) { toast(e.message,'error'); }
+}
+function startLiveSync() {
+  if(liveSyncTimer) clearInterval(liveSyncTimer);
+  liveSyncTimer=setInterval(()=>refreshLiveState().catch(e=>console.debug('Live sync retry',e)),1600);
+}
+function sameMessages(a,b) {
+  return a.length===b.length && a.every((m,i)=>m.id===b[i]?.id && m.text===b[i]?.text && m.editedAt===b[i]?.editedAt && JSON.stringify(m.reactions||{})===JSON.stringify(b[i]?.reactions||{}));
+}
+async function refreshLiveState() {
+  if(!state.me||liveSyncBusy)return;
+  liveSyncBusy=true;
+  let shouldRender=false;
+  try {
+    if(state.mode==='dm') {
+      const thread=state.threads.find(t=>t.id===state.activeThreadId);
+      if(thread) {
+        const d=await api('/api/dm/messages?threadId='+encodeURIComponent(thread.id));
+        const next=d.messages||[];
+        if(!sameMessages(state.messages,next)){state.messages=next;shouldRender=true;}
+      }
+    } else {
+      const channel=currentChannel();
+      if(channel?.kind==='text') {
+        const d=await api('/api/messages?channelId='+encodeURIComponent(channel.id));
+        const next=d.messages||[];
+        if(!sameMessages(state.messages,next)){state.messages=next;shouldRender=true;}
+      }
+    }
+    if(Date.now()-lastVoiceSyncAt>2400) {
+      lastVoiceSyncAt=Date.now();
+      const server=currentServer();
+      const voiceChannels=state.channels.filter(c=>c.serverId===server?.id&&c.kind==='voice');
+      const results=await Promise.all(voiceChannels.map(async channel=>{
+        try {return {channelId:channel.id,participants:(await api('/api/voice/participants?channelId='+encodeURIComponent(channel.id))).participants||[]};}
+        catch {return null;}
+      }));
+      for(const result of results.filter(Boolean)) {
+        const previous=state.voiceParticipants[result.channelId]||[];
+        const next=result.participants;
+        const before=previous.map(p=>p.userId).sort().join(',');
+        const after=next.map(p=>p.userId).sort().join(',');
+        if(before!==after || previous.some(p=>next.find(n=>n.userId===p.userId)?.displayName!==p.displayName)) {
+          state.voiceParticipants[result.channelId]=next;
+          if(state.voiceChannelId===result.channelId) syncVoicePeers(next);
+          shouldRender=true;
+        }
+      }
+    }
+    if(shouldRender)render();
+  } catch(e) { console.debug('Live sync failed; retrying',e); }
+  finally {liveSyncBusy=false;}
 }
 
 async function authenticate(form) {
@@ -224,7 +340,7 @@ async function boot() {
     else state.activeChannelId=state.channels.find(c=>c.serverId===state.activeServerId&&c.kind==='text')?.id||state.channels.find(c=>c.serverId===state.activeServerId)?.id||'';
     loadLocalPrefs();
     try { const conf=await api('/api/voice/config'); state.iceServers=conf.iceServers||state.iceServers; state.turnConfigured=!!conf.turnConfigured; } catch {}
-    render(); await refreshView(); connectWs();
+    render(); await refreshView(); connectWs(); startLiveSync();
   } catch(e) { state.me=null; renderAuth(); toast(e.message,'error'); }
 }
 async function refreshView() {
@@ -255,6 +371,7 @@ function connectWs() {
       state.wsReady=true;state.wsReconnect=800;
       if(state.voiceChannelId) sendWs({type:'join_voice',channelId:state.voiceChannelId});
       state.servers.forEach(s=>refreshMembers().catch(()=>{}));
+      refreshView().catch(()=>{});
       render();
     });
     ws.addEventListener('message',event=>{let msg;try{msg=JSON.parse(event.data);}catch{return;}handleWs(msg);});
@@ -282,7 +399,12 @@ function handleWs(msg) {
   }
   if(msg.type==='message_delete') {state.messages=state.messages.filter(m=>m.id!==msg.messageId);render();return;}
   if(msg.type==='member_update'||msg.type==='profile_update'||msg.type==='presence_update') {refreshMembers().then(render);return;}
-  if(msg.type==='channel_update') {loadBootstrapSoft();return;}
+  if(msg.type==='channel_update'||msg.type==='server_update') {loadBootstrapSoft();return;}
+  if(msg.type==='server_kicked') {
+    state.servers=state.servers.filter(s=>s.id!==msg.serverId);state.channels=state.channels.filter(c=>c.serverId!==msg.serverId);
+    if(state.activeServerId===msg.serverId){leaveVoice(false);state.activeServerId=state.servers[0]?.id||'toast-zone';state.activeChannelId=state.channels.find(c=>c.serverId===state.activeServerId&&c.kind==='text')?.id||'ch-general';state.mode='channel';state.modal='';refreshView().catch(()=>{});}
+    toast('Du wurdest vom Server '+(msg.serverName||'')+' entfernt.','error');render();return;
+  }
   if(msg.type==='voice_state') {
     state.voiceParticipants[msg.channelId]=msg.participants||[];
     if(state.voiceChannelId===msg.channelId) syncVoicePeers(msg.participants||[]);
@@ -374,12 +496,13 @@ async function startVoice(channelId) {
     state.localStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
     state.voiceChannelId=channelId;state.muted=false;
     const channel=state.channels.find(c=>c.id===channelId);if(channel)state.activeServerId=channel.serverId;state.activeChannelId=channelId;
-    sendWs({type:'join_voice',channelId});
-    if(!state.wsReady)toast('Verbindung wird aufgebaut. Sprachstatus folgt gleich.');
     render();
-    try{const d=await api(`/api/voice/participants?channelId=${encodeURIComponent(channelId)}`);state.voiceParticipants[channelId]=d.participants||[];}catch{}
+    await api('/api/voice/join',{method:'POST',body:{channelId}});
+    sendWs({type:'join_voice',channelId});
+    if(!state.wsReady)toast('Sprachstatus läuft über den Server. Live-Audio wartet auf die Verbindung.');
+    const d=await api(`/api/voice/participants?channelId=${encodeURIComponent(channelId)}`);state.voiceParticipants[channelId]=d.participants||[];
     syncVoicePeers(state.voiceParticipants[channelId]||[]);render();
-  } catch(e) {toast(`Mikrofonzugriff fehlgeschlagen: ${e.message}`,'error');state.localStream?.getTracks().forEach(t=>t.stop());state.localStream=null;}
+  } catch(e) {toast(`Sprachkanal-Beitritt fehlgeschlagen: ${e.message}`,'error');state.voiceChannelId='';state.localStream?.getTracks().forEach(t=>t.stop());state.localStream=null;render();}
 }
 function ensurePeer(userId,channelId) {
   const key=`${channelId}:${userId}`;let entry=state.peerConnections.get(key);if(entry)return entry;
@@ -451,7 +574,7 @@ async function toggleScreenShare() {
   } catch(e){toast(`Bildschirmfreigabe abgebrochen: ${e.message}`,'error');}
 }
 function leaveVoice(notify=true) {
-  const channelId=state.voiceChannelId;if(channelId&&notify)sendWs({type:'leave_voice',channelId});
+  const channelId=state.voiceChannelId;if(channelId&&notify){sendWs({type:'leave_voice',channelId});api('/api/voice/leave',{method:'POST',body:{channelId}}).catch(()=>{});}
   for(const track of state.localStream?.getTracks()||[])track.stop();for(const track of state.screenStream?.getTracks()||[])track.stop();
   for(const {pc} of state.peerConnections.values())pc.close();state.peerConnections.clear();state.remoteStreams.clear();state.pendingIce.clear();state.localStream=null;state.screenStream=null;state.voiceChannelId='';state.muted=false;
   if(channelId){state.voiceParticipants[channelId]=(state.voiceParticipants[channelId]||[]).filter(p=>p.userId!==state.me?.id);}render();
@@ -474,6 +597,11 @@ function handleClick(event) {
   if(action==='copy-invite'){copyText(state.modalData.code||currentServer()?.inviteCode||'TOASTZONE');return;}
   if(action==='copy-invite-link'){const code=state.modalData.code||currentServer()?.inviteCode||'TOASTZONE';copyText(`${location.origin}/?invite=${code}`);return;}
   if(action==='toastlab'){state.modal='toastlab';render();return;}
+  if(action==='admin-panel'){openAdminPanel();return;}
+  if(action==='admin-refresh'){loadAdminPanelData();return;}
+  if(action==='admin-role'){changeAdminRole(el.dataset.id,el.dataset.role);return;}
+  if(action==='admin-kick'){kickAdminMember(el.dataset.id);return;}
+  if(action==='admin-delete-message'){adminDeleteMessage(el.dataset.id);return;}
   if(action==='profile'){state.modal='profile';render();return;}
   if(action==='logout'){logout();return;}
   if(action==='toggle-nav'){state.modal=state.modal==='nav-open'?'':'nav-open';render();return;}
@@ -510,6 +638,7 @@ function handleSubmit(event) {
   if(form.id==='new-dm-form'){createDm(form);return;}
   if(form.id==='profile-form'){saveProfile(form);return;}
   if(form.id==='edit-message-form'){editMessage();return;}
+  if(form.id==='admin-server-form'){saveAdminServer(form);return;}
 }
 function handleInput(event) {
   if(event.target.id==='composer-input'){state.draft=event.target.value;event.target.style.height='auto';event.target.style.height=Math.min(150,event.target.scrollHeight)+'px';}
