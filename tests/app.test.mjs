@@ -13,6 +13,7 @@ let base;
 let cookieA = '';
 let cookieB = '';
 let userA;
+let userB;
 let serverId;
 let customChannelId;
 
@@ -35,6 +36,79 @@ async function request(route, { method = 'GET', body, cookie } = {}) {
   const type = res.headers.get('content-type') || '';
   const json = type.includes('application/json') ? await res.json() : await res.text();
   return { status: res.status, json, cookie: res.headers.get('set-cookie')?.split(';')[0] || '' };
+}
+
+function maskedWsFrame(data, opcode = 1) {
+  const payload = Buffer.from(typeof data === 'string' ? data : JSON.stringify(data));
+  const mask = randomBytes(4);
+  let header;
+  if (payload.length < 126) header = Buffer.from([0x80 | opcode, 0x80 | payload.length]);
+  else if (payload.length < 65536) { header = Buffer.alloc(4); header[0] = 0x80 | opcode; header[1] = 0x80 | 126; header.writeUInt16BE(payload.length, 2); }
+  else { header = Buffer.alloc(10); header[0] = 0x80 | opcode; header[1] = 0x80 | 127; header.writeBigUInt64BE(BigInt(payload.length), 2); }
+  const masked = Buffer.alloc(payload.length);
+  for (let i = 0; i < payload.length; i++) masked[i] = payload[i] ^ mask[i % 4];
+  return Buffer.concat([header, mask, masked]);
+}
+
+async function openWebSocket(cookie) {
+  const socket = net.createConnection({host:'127.0.0.1',port:app.server.address().port});
+  let buffer = Buffer.alloc(0), handshaken = false;
+  const queued = [], waiters = [];
+  let readyResolve, readyReject;
+  const ready = new Promise((resolve,reject) => { readyResolve=resolve; readyReject=reject; });
+  const deliver = msg => {
+    const index = waiters.findIndex(w => w.predicate(msg));
+    if (index >= 0) { const waiter=waiters.splice(index,1)[0]; clearTimeout(waiter.timer); waiter.resolve(msg); }
+    else queued.push(msg);
+  };
+  const waitFor = (predicate, timeout = 2500) => {
+    const index=queued.findIndex(predicate);
+    if(index>=0)return Promise.resolve(queued.splice(index,1)[0]);
+    return new Promise((resolve,reject)=>{
+      const waiter={predicate,resolve,reject,timer:null};
+      waiter.timer=setTimeout(()=>{const i=waiters.indexOf(waiter);if(i>=0)waiters.splice(i,1);reject(new Error('Timed out waiting for WebSocket message'));},timeout);
+      waiters.push(waiter);
+    });
+  };
+  socket.on('error',err=>{if(!handshaken)readyReject(err);});
+  socket.on('data',chunk=>{
+    buffer=Buffer.concat([buffer,chunk]);
+    if(!handshaken) {
+      const end=buffer.indexOf(Buffer.from('\r\n\r\n'));
+      if(end<0)return;
+      const head=buffer.subarray(0,end).toString('utf8');
+      if(!head.includes('101 Switching Protocols')){readyReject(new Error('WebSocket handshake failed: '+head));socket.destroy();return;}
+      buffer=buffer.subarray(end+4);handshaken=true;readyResolve();
+    }
+    while(buffer.length>=2) {
+      const opcode=buffer[0]&0x0f, masked=!!(buffer[1]&0x80);
+      let length=buffer[1]&0x7f, offset=2;
+      if(length===126){if(buffer.length<4)break;length=buffer.readUInt16BE(2);offset=4;}
+      else if(length===127){if(buffer.length<10)break;const n=buffer.readBigUInt64BE(2);if(n>1048576n){socket.destroy();return;}length=Number(n);offset=10;}
+      let mask;
+      if(masked){if(buffer.length<offset+4)break;mask=buffer.subarray(offset,offset+4);offset+=4;}
+      if(buffer.length<offset+length)break;
+      const payload=Buffer.from(buffer.subarray(offset,offset+length));buffer=buffer.subarray(offset+length);
+      if(mask)for(let i=0;i<payload.length;i++)payload[i]^=mask[i%4];
+      if(opcode===0x8){socket.end();continue;}
+      if(opcode===0x9){socket.write(maskedWsFrame(payload,0xA));continue;}
+      if(opcode===0x1){try{deliver(JSON.parse(payload.toString('utf8')));}catch{}}
+    }
+  });
+  await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject);});
+  const key=randomBytes(16).toString('base64');
+  socket.write('GET /ws HTTP/1.1\r\nHost: 127.0.0.1:'+app.server.address().port+'\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: '+key+'\r\nSec-WebSocket-Version: 13\r\nCookie: '+cookie+'\r\n\r\n');
+  await ready;
+  return {
+    socket, waitFor,
+    send: data => socket.write(maskedWsFrame(data)),
+    close: async () => {
+      if(socket.destroyed)return;
+      const closed=new Promise(resolve=>socket.once('close',resolve));
+      try{socket.write(maskedWsFrame(Buffer.alloc(0),0x8));}catch{}
+      await Promise.race([closed,new Promise(resolve=>setTimeout(()=>{socket.destroy();resolve();},400))]);
+    }
+  };
 }
 
 test('health endpoint and authentication', async () => {
@@ -84,6 +158,7 @@ test('server creation, access control, invite join and members', async () => {
   const registerB = await request('/api/auth/register', { method:'POST', body:{ username:'SecondMember', password:'AnotherSecure!456' } });
   assert.equal(registerB.status, 201, JSON.stringify(registerB.json));
   cookieB = registerB.cookie;
+  userB = registerB.json.user;
   const deniedBeforeJoin = await request(`/api/messages?channelId=${encodeURIComponent(customChannelId)}`, { cookie:cookieB });
   assert.equal(deniedBeforeJoin.status, 403);
   const join = await request('/api/servers/join', { method:'POST', cookie:cookieB, body:{inviteCode:created.json.server.inviteCode} });
@@ -147,32 +222,37 @@ test('direct messages are private and persist for both participants', async () =
   assert.equal(outsider.status,403);
 });
 
-test('authenticated WebSocket voice presence joins and leaves', async () => {
-  const port=app.server.address().port;
-  const socket=net.createConnection({host:'127.0.0.1',port});
-  await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject);});
-  const key=randomBytes(16).toString('base64');
-  socket.write(`GET /ws HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\nCookie: ${cookieA}\r\n\r\n`);
-  let handshake='';
-  await new Promise((resolve,reject)=>{
-    const timer=setTimeout(()=>reject(new Error('WebSocket handshake timeout')),2000);
-    const onData=chunk=>{handshake+=chunk.toString('binary');const end=handshake.indexOf('\r\n\r\n');if(end>=0){clearTimeout(timer);socket.off('data',onData);assert.match(handshake.slice(0,end),/101 Switching Protocols/);resolve();}};
-    socket.on('data',onData);socket.once('error',reject);
-  });
-  const sendFrame=(obj)=>{const payload=Buffer.from(JSON.stringify(obj));const mask=randomBytes(4);const frame=Buffer.alloc(2+4+payload.length);frame[0]=0x81;frame[1]=0x80|payload.length;mask.copy(frame,2);for(let i=0;i<payload.length;i++)frame[6+i]=payload[i]^mask[i%4];socket.write(frame);};
-  const waitFor=async(fn)=>{for(let i=0;i<40;i++){if(fn())return;await new Promise(r=>setTimeout(r,10));}throw new Error('Timed out waiting for websocket state');};
-  sendFrame({type:'join_voice',channelId:'ch-lobby'});
-  await waitFor(()=>app.store.state.voiceSessions.some(v=>v.userId===userA.id&&v.channelId==='ch-lobby'));
-  const participants=await request('/api/voice/participants?channelId=ch-lobby',{cookie:cookieA});
-  assert.equal(participants.status,200);
-  assert.ok(participants.json.participants.some(p=>p.userId===userA.id));
-  sendFrame({type:'leave_voice',channelId:'ch-lobby'});
-  await waitFor(()=>!app.store.state.voiceSessions.some(v=>v.userId===userA.id&&v.channelId==='ch-lobby'));
-  const closed = new Promise(resolve => socket.once('close', resolve));
-  const mask=randomBytes(4); const closeFrame=Buffer.from([0x88,0x80,mask[0],mask[1],mask[2],mask[3]]); socket.write(closeFrame);
-  await Promise.race([closed,new Promise(resolve=>setTimeout(()=>{socket.destroy();resolve();},500))]);
-});
+test('two clients receive live messages and voice join/leave events', async () => {
+  const wsA=await openWebSocket(cookieA);
+  const wsB=await openWebSocket(cookieB);
+  try {
+    await Promise.all([wsA.waitFor(m=>m.type==='connected'),wsB.waitFor(m=>m.type==='connected')]);
 
+    const sent=await request('/api/messages',{method:'POST',cookie:cookieA,body:{channelId:'ch-general',text:'Live-Nachricht muss beim zweiten Client ankommen.'}});
+    assert.equal(sent.status,201);
+    const received=await wsB.waitFor(m=>m.type==='message_new'&&m.message?.id===sent.json.message.id);
+    assert.equal(received.message.text,'Live-Nachricht muss beim zweiten Client ankommen.');
+
+    const joinA=await request('/api/voice/join',{method:'POST',cookie:cookieA,body:{channelId:'ch-lobby'}});
+    assert.equal(joinA.status,200,JSON.stringify(joinA.json));
+    const stateAtB=await wsB.waitFor(m=>m.type==='voice_state'&&m.channelId==='ch-lobby'&&m.participants.some(p=>p.userId===userA.id));
+    assert.ok(stateAtB.participants.some(p=>p.userId===userA.id));
+
+    const joinB=await request('/api/voice/join',{method:'POST',cookie:cookieB,body:{channelId:'ch-lobby'}});
+    assert.equal(joinB.status,200,JSON.stringify(joinB.json));
+    const stateAtA=await wsA.waitFor(m=>m.type==='voice_state'&&m.channelId==='ch-lobby'&&m.participants.some(p=>p.userId===userA.id)&&m.participants.some(p=>p.userId===userB.id));
+    assert.equal(stateAtA.participants.length,2);
+
+    const leaveB=await request('/api/voice/leave',{method:'POST',cookie:cookieB,body:{channelId:'ch-lobby'}});
+    assert.equal(leaveB.status,200);
+    const leftAtA=await wsA.waitFor(m=>m.type==='voice_state'&&m.channelId==='ch-lobby'&&!m.participants.some(p=>p.userId===userB.id));
+    assert.ok(leftAtA.participants.some(p=>p.userId===userA.id));
+
+    assert.equal((await request('/api/voice/leave',{method:'POST',cookie:cookieA,body:{channelId:'ch-lobby'}})).status,200);
+  } finally {
+    await Promise.all([wsA.close(),wsB.close()]);
+  }
+});
 test('voice config is authenticated and returns ICE configuration', async () => {
   assert.equal((await request('/api/voice/config')).status, 401);
   const response = await request('/api/voice/config', {cookie:cookieA});
