@@ -21,7 +21,7 @@ Das startet Toastcord **auf deinem eigenen PC**. Damit Freunde über das Interne
 
 ## Was drin ist
 
-Chat mit gespeicherten Nachrichten, Konten, Server und Kanäle, Mitgliederliste, Direktnachrichten, Sprachkanäle mit WebRTC sowie ToastLab.
+Chat mit gespeicherten Nachrichten, Konten, Server und Kanäle, Mitgliederliste, Direktnachrichten, **Live-Emoji-Reaktionen**, Sprachkanäle mit WebRTC sowie ToastLab.
 
 ## Tests
 
