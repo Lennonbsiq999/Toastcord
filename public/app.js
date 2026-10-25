@@ -370,18 +370,16 @@ function connectWs() {
     ws.addEventListener('open',()=>{
       state.wsReady=true;state.wsReconnect=800;
       if(state.voiceChannelId) sendWs({type:'join_voice',channelId:state.voiceChannelId});
-      state.servers.forEach(s=>refreshMembers().catch(()=>{}));
-      if(!state.modal)refreshView().catch(()=>{});
-      render();
+      if(!state.modal){refreshView().catch(()=>{});render();}
     });
     ws.addEventListener('message',event=>{let msg;try{msg=JSON.parse(event.data);}catch{return;}handleWs(msg);});
-    ws.addEventListener('close',()=>{state.wsReady=false;if(state.ws===ws)state.ws=null;render();if(state.me&&!state.wsIntentionalClose){const delay=state.wsReconnect;state.wsReconnect=Math.min(12000,state.wsReconnect*1.6);setTimeout(connectWs,delay);}});
+    ws.addEventListener('close',()=>{state.wsReady=false;if(state.ws===ws)state.ws=null;if(!state.modal)render();if(state.me&&!state.wsIntentionalClose){const delay=state.wsReconnect;state.wsReconnect=Math.min(12000,state.wsReconnect*1.6);setTimeout(connectWs,delay);}});
     ws.addEventListener('error',()=>{state.wsReady=false;});
   } catch(e) { console.warn('WebSocket unavailable',e); }
 }
 function sendWs(data) { if(state.ws?.readyState===WebSocket.OPEN)state.ws.send(JSON.stringify(data)); }
 function handleWs(msg) {
-  if(msg.type==='connected'){state.wsReady=true;render();return;}
+  if(msg.type==='connected'){state.wsReady=true;if(!state.modal)render();return;}
   if(msg.type==='pong')return;
   if(msg.type==='dm_message_new'&&state.mode==='dm'&&msg.threadId===state.activeThreadId){if(!state.messages.some(m=>m.id===msg.message.id))state.messages.push(msg.message);if(!state.modal)render();return;}
   if(msg.type==='message_new'&&state.mode==='channel'&&msg.channelId===state.activeChannelId) {
