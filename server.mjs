@@ -320,6 +320,18 @@ function attachWebSocket(server, store) {
 export function createAppServer(options = {}) {
   const dataDir = options.dataDir || process.env.TOASTCORD_DATA_DIR || path.join(ROOT, 'data');
   const store = new JsonStore(dataDir);
+  const localMode = options.localMode ?? process.env.TOASTCORD_LOCAL_MODE === 'true';
+  if (localMode) {
+    const homeServer = store.state.servers.find(server => server.id === 'toast-zone' && server.ownerId === 'system');
+    const firstUser = store.state.users[0];
+    if (homeServer && firstUser) {
+      homeServer.ownerId = firstUser.id;
+      let membership = store.state.memberships.find(m => m.serverId === homeServer.id && m.userId === firstUser.id);
+      if (!membership) { membership = { id:newId('mem_'), serverId:homeServer.id, userId:firstUser.id, role:'owner', joinedAt:firstUser.createdAt || Date.now() }; store.state.memberships.push(membership); }
+      else membership.role = 'owner';
+      store.flush();
+    }
+  }
   if (store.state.voiceSessions.length) { store.state.voiceSessions = []; store.flush(); }
   const secureCookie = options.secureCookie ?? process.env.COOKIE_SECURE === 'true';
   const authFailures = new Map();
@@ -344,7 +356,15 @@ export function createAppServer(options = {}) {
             if (store.state.users.some(u => u.username.toLocaleLowerCase() === username.toLocaleLowerCase())) { sendError(res, 409, 'Dieser Benutzername ist bereits vergeben.'); return; }
             const user = { id: newId('usr_'), username, displayName: displayName.slice(0,32) || username, passwordHash: await hashPassword(password), status:'online', avatarColor:['#f4a261','#e76f51','#2a9d8f','#8b7cf6','#53b3cb'][store.state.users.length % 5], createdAt:Date.now() };
             const token = randomBytes(32).toString('base64url');
-            store.update(state => { state.users.push(user); state.sessions.push({ tokenHash:hashToken(token),userId:user.id,expiresAt:Date.now()+SESSION_TTL,createdAt:Date.now() }); state.memberships.push({ id:newId('mem_'),serverId:'toast-zone',userId:user.id,role:'member',joinedAt:Date.now() }); });
+            const homeServer = store.state.servers.find(server => server.id === 'toast-zone');
+            const localBootstrapOwner = localMode && store.state.users.length === 0 && homeServer?.ownerId === 'system';
+            store.update(state => {
+              state.users.push(user);
+              state.sessions.push({ tokenHash:hashToken(token),userId:user.id,expiresAt:Date.now()+SESSION_TTL,createdAt:Date.now() });
+              const server = state.servers.find(s => s.id === 'toast-zone');
+              if (localBootstrapOwner && server) server.ownerId = user.id;
+              state.memberships.push({ id:newId('mem_'),serverId:'toast-zone',userId:user.id,role:localBootstrapOwner?'owner':'member',joinedAt:Date.now() });
+            });
             setCookie(res, token, secureCookie); sendJson(res, 201, { user:store.safeUser(user) }); return;
           }
           if (pathname === '/api/auth/login' && req.method === 'POST') {
