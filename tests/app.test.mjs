@@ -98,6 +98,41 @@ test('server creation, access control, invite join and members', async () => {
 });
 
 
+test('message reactions persist, toggle off, and reject unsupported emoji', async () => {
+  const created = await request('/api/messages', {
+    method:'POST', cookie:cookieA,
+    body:{channelId:'ch-general',text:'Reaktionen im Toastcord-Test'}
+  });
+  assert.equal(created.status, 201);
+  const id = created.json.message.id;
+
+  const first = await request(`/api/messages/${encodeURIComponent(id)}/reactions`, {
+    method:'POST', cookie:cookieA, body:{emoji:'🔥'}
+  });
+  assert.equal(first.status, 200, JSON.stringify(first.json));
+  assert.ok(first.json.message.reactions['🔥'].includes(userA.id));
+
+  const member = await request('/api/me',{cookie:cookieB});
+  assert.equal(member.status, 200);
+  const second = await request(`/api/messages/${encodeURIComponent(id)}/reactions`, {
+    method:'POST', cookie:cookieB, body:{emoji:'🔥'}
+  });
+  assert.equal(second.status, 200, JSON.stringify(second.json));
+  assert.ok(second.json.message.reactions['🔥'].includes(userA.id));
+  assert.ok(second.json.message.reactions['🔥'].includes(member.json.user.id));
+
+  const removed = await request(`/api/messages/${encodeURIComponent(id)}/reactions`, {
+    method:'POST', cookie:cookieA, body:{emoji:'🔥'}
+  });
+  assert.equal(removed.status, 200);
+  assert.ok(!removed.json.message.reactions['🔥'].includes(userA.id));
+
+  const invalid = await request(`/api/messages/${encodeURIComponent(id)}/reactions`, {
+    method:'POST', cookie:cookieA, body:{emoji:'<script>'}
+  });
+  assert.equal(invalid.status, 400);
+});
+
 test('direct messages are private and persist for both participants', async () => {
   const create = await request('/api/dm/threads', {method:'POST',cookie:cookieA,body:{username:'SecondMember'}});
   assert.equal(create.status,200,JSON.stringify(create.json));
