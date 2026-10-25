@@ -21,7 +21,9 @@ Das startet Toastcord **auf deinem eigenen PC**. Damit Freunde über das Interne
 
 ## Was drin ist
 
-Chat mit gespeicherten Nachrichten, Konten, Server und Kanäle, Mitgliederliste, Direktnachrichten, **Live-Emoji-Reaktionen**, Sprachkanäle mit WebRTC sowie ToastLab.
+Chat mit gespeicherten Nachrichten, Konten, Server und Kanäle, Mitgliederliste, Direktnachrichten, **Live-Emoji-Reaktionen**, WebSocket-Liveupdates mit REST-Synchronisierung als Rückfallebene, Sprachkanäle mit WebRTC sowie ToastLab.
+
+Owner und Admins eigener Server bekommen über das Zahnrad neben dem Servernamen ein Admin-Panel mit Mitglieder- und Rollenverwaltung, Servereinstellungen, Nachrichtenmoderation, Live-Statistiken und Audit-Log. Nur der Owner darf Admin-Rechte vergeben oder entfernen. Entfernte Mitglieder verlieren den Kanalzugriff auch nach dem Neuladen.
 
 ## Tests
 
