@@ -26,6 +26,7 @@ if not defined NODE_CMD (
 
 set "PORT=3000"
 set "HOST=127.0.0.1"
+set "TOASTCORD_LOCAL_MODE=true"
 set "TOASTCORD_DATA_DIR=%~dp0data"
 if not exist "data" mkdir "data"
 
