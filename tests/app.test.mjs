@@ -327,6 +327,39 @@ test('saved sessions and messages survive server restart', async () => {
   assert.ok(history.json.messages.some(m => m.text === 'Nachricht erfolgreich bearbeitet.'));
 });
 
+
+test('local setup gives the first account owner access to the default server only', async () => {
+  const localDir=fs.mkdtempSync(path.join(os.tmpdir(),'toastcord-local-bootstrap-'));
+  const localApp=createAppServer({dataDir:localDir,secureCookie:false,localMode:true});
+  let localBase='';
+  try {
+    await new Promise(resolve=>localApp.server.listen(0,'127.0.0.1',resolve));
+    localBase='http://127.0.0.1:'+localApp.server.address().port;
+    const register=async username=>fetch(localBase+'/api/auth/register',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username,password:'LocalBootstrap!123'})
+    });
+    const firstResponse=await register('LocalOwner');
+    assert.equal(firstResponse.status,201);
+    const firstCookie=firstResponse.headers.get('set-cookie').split(';')[0];
+    const ownerBoot=await fetch(localBase+'/api/bootstrap',{headers:{Cookie:firstCookie}}).then(r=>r.json());
+    assert.equal(ownerBoot.servers.find(s=>s.id==='toast-zone').role,'owner');
+    const ownerPanel=await fetch(localBase+'/api/admin/overview?serverId=toast-zone',{headers:{Cookie:firstCookie}});
+    assert.equal(ownerPanel.status,200);
+
+    const secondResponse=await register('LocalMember');
+    assert.equal(secondResponse.status,201);
+    const secondCookie=secondResponse.headers.get('set-cookie').split(';')[0];
+    const memberBoot=await fetch(localBase+'/api/bootstrap',{headers:{Cookie:secondCookie}}).then(r=>r.json());
+    assert.equal(memberBoot.servers.find(s=>s.id==='toast-zone').role,'member');
+    const denied=await fetch(localBase+'/api/admin/overview?serverId=toast-zone',{headers:{Cookie:secondCookie}});
+    assert.equal(denied.status,403);
+  } finally {
+    if(localApp.server.listening){localApp.server.closeIdleConnections();localApp.server.closeAllConnections();await new Promise(resolve=>localApp.server.close(resolve));}
+    fs.rmSync(localDir,{recursive:true,force:true});
+  }
+});
+
 test('password hashing and input normalization', async () => {
   const encoded = await hashPassword('correct horse battery staple');
   assert.match(encoded, /^scrypt\$/);
