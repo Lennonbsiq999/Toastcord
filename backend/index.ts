@@ -339,9 +339,10 @@ async function readFallbackVoiceSessions(channelId:string): Promise<FallbackVoic
   const rows = await readFallbackJson<FallbackVoiceSession[]>(fallbackVoicePath(channelId),[]);
   return Array.isArray(rows) ? rows.filter(s=>s && s.recordType==='voice_session' && s.channelId===channelId && !!s.connectionId).slice(-100) : [];
 }
-async function writeFallbackVoiceSession(session:FallbackVoiceSession): Promise<void> {
+async function writeFallbackVoiceSession(session:VoiceSession): Promise<void> {
   const rows=await readFallbackVoiceSessions(session.channelId);
-  await writeFallbackJson(fallbackVoicePath(session.channelId),[...rows.filter(s=>s.userId!==session.userId),session].slice(-100));
+  const stored:FallbackVoiceSession = {...session,recordType:'voice_session'};
+  await writeFallbackJson(fallbackVoicePath(session.channelId),[...rows.filter(s=>s.userId!==stored.userId),stored].slice(-100));
 }
 async function removeFallbackVoiceSession(channelId:string,userId:string): Promise<void> {
   const rows=await readFallbackVoiceSessions(channelId);
