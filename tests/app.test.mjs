@@ -173,6 +173,45 @@ test('server creation, access control, invite join and members', async () => {
 });
 
 
+
+test('owner-only admin panel, role management, settings and message moderation', async () => {
+  const denied=await request('/api/admin/overview?serverId='+encodeURIComponent(serverId),{cookie:cookieB});
+  assert.equal(denied.status,403);
+
+  const overview=await request('/api/admin/overview?serverId='+encodeURIComponent(serverId),{cookie:cookieA});
+  assert.equal(overview.status,200,JSON.stringify(overview.json));
+  assert.equal(overview.json.server.role,'owner');
+  assert.ok(overview.json.members.some(m=>m.userId===userB.id));
+
+  const sent=await request('/api/messages',{method:'POST',cookie:cookieA,body:{channelId:customChannelId,text:'Diese Nachricht wird moderiert gelöscht.'}});
+  assert.equal(sent.status,201);
+  const removed=await request('/api/admin/messages/'+encodeURIComponent(sent.json.message.id)+'?serverId='+encodeURIComponent(serverId),{method:'DELETE',cookie:cookieA});
+  assert.equal(removed.status,200,JSON.stringify(removed.json));
+  const history=await request('/api/messages?channelId='+encodeURIComponent(customChannelId),{cookie:cookieA});
+  assert.equal(history.status,200);
+  assert.ok(!history.json.messages.some(m=>m.id===sent.json.message.id));
+
+  const promoted=await request('/api/admin/members/'+encodeURIComponent(userB.id)+'/role',{method:'POST',cookie:cookieA,body:{serverId,role:'admin'}});
+  assert.equal(promoted.status,200,JSON.stringify(promoted.json));
+  const adminView=await request('/api/admin/overview?serverId='+encodeURIComponent(serverId),{cookie:cookieB});
+  assert.equal(adminView.status,200);
+  assert.equal(adminView.json.server.role,'admin');
+
+  const privilegeEscalation=await request('/api/admin/members/'+encodeURIComponent(userA.id)+'/role',{method:'POST',cookie:cookieB,body:{serverId,role:'admin'}});
+  assert.equal(privilegeEscalation.status,403);
+
+  const demoted=await request('/api/admin/members/'+encodeURIComponent(userB.id)+'/role',{method:'POST',cookie:cookieA,body:{serverId,role:'member'}});
+  assert.equal(demoted.status,200,JSON.stringify(demoted.json));
+
+  const settings=await request('/api/admin/server/'+encodeURIComponent(serverId),{method:'PATCH',cookie:cookieA,body:{name:'Test Community Updated',description:'Admin Panel Test'}});
+  assert.equal(settings.status,200,JSON.stringify(settings.json));
+  assert.equal(settings.json.server.name,'Test Community Updated');
+  const final=await request('/api/admin/overview?serverId='+encodeURIComponent(serverId),{cookie:cookieA});
+  assert.equal(final.status,200);
+  assert.ok(final.json.auditLog.some(entry=>entry.action==='message_deleted'));
+  assert.ok(final.json.auditLog.some(entry=>entry.action==='member_promoted'));
+});
+
 test('message reactions persist, toggle off, and reject unsupported emoji', async () => {
   const created = await request('/api/messages', {
     method:'POST', cookie:cookieA,
