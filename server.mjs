@@ -12,6 +12,7 @@ const COOKIE = 'toastcord_session';
 const SESSION_TTL = 1000 * 60 * 60 * 24 * 14;
 const MAX_BODY = 1024 * 1024;
 const MAX_MESSAGE_LENGTH = 2000;
+const REACTION_EMOJIS = new Set(['👍','❤️','😂','🔥','🎉','🍞','👀','🤔','💀','🚀']);
 
 export function createDefaultState() {
   const createdAt = Date.now();
@@ -448,6 +449,32 @@ export function createAppServer(options = {}) {
           store.update(state => state.messages.push(message)); const safe = store.safeMessage(message);
           broadcast({type:'dm_message_new',threadId,message:safe},c=>thread.participants.includes(c.userId));
           sendJson(res,201,{message:safe}); return;
+        }
+        const reactionMatch = pathname.match(/^\/api\/messages\/([^/]+)\/reactions$/);
+        if (reactionMatch && req.method === 'POST') {
+          const message = store.state.messages.find(m => m.id === reactionMatch[1] && !m.deleted);
+          if (!message) { sendError(res, 404, 'Nachricht nicht gefunden.'); return; }
+          const thread = message.threadId ? store.state.threads.find(t => t.id === message.threadId) : null;
+          const channel = message.channelId ? store.state.channels.find(c => c.id === message.channelId) : null;
+          if (message.threadId) {
+            if (!thread || !thread.participants.includes(user.id)) { sendError(res, 403, 'Du hast keinen Zugriff auf diese Direktnachricht.'); return; }
+          } else if (!channel || channel.kind !== 'text' || !store.isMember(channel.serverId, user.id)) {
+            sendError(res, 403, 'Du kannst auf diese Nachricht nicht reagieren.'); return;
+          }
+          const body = await readBody(req);
+          const emoji = String(body.emoji || '');
+          if (!REACTION_EMOJIS.has(emoji)) { sendError(res, 400, 'Dieses Emoji ist nicht verfügbar.'); return; }
+          store.update(() => {
+            message.reactions ||= {};
+            const users = new Set(Array.isArray(message.reactions[emoji]) ? message.reactions[emoji] : []);
+            if (users.has(user.id)) users.delete(user.id); else users.add(user.id);
+            if (users.size) message.reactions[emoji] = [...users];
+            else delete message.reactions[emoji];
+          });
+          const safe = store.safeMessage(message);
+          if (thread) broadcast({ type:'message_reaction', threadId:thread.id, message:safe }, c => thread.participants.includes(c.userId));
+          else broadcast({ type:'message_reaction', channelId:channel.id, message:safe }, c => store.isMember(channel.serverId, c.userId));
+          sendJson(res, 200, { message:safe }); return;
         }
         const messagesMatch=pathname.match(/^\/api\/messages\/([^/]+)$/);
         if (messagesMatch && req.method === 'PATCH') {
