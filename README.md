@@ -1,23 +1,23 @@
 # Toastcord
 
-Toastcord is a Discord-style community chat app with text channels, DMs, voice-channel presence, profile/shop features, and ToastLab productivity tools.
+Toastcord is a Discord-style community chat app with text channels, DMs, voice-channel presence, profile/shop features and ToastLab productivity tools.
 
-## Current source snapshot
+## Source and deployment status
 
-This repository mirrors the source currently deployed at https://toastcord-zmx27r.v2.appdeploy.ai/.
+This repository mirrors the source from the currently deployed AppDeploy app: https://toastcord-zmx27r.v2.appdeploy.ai/.
 
-The app currently uses AppDeploy-specific packages (`@appdeploy/client` and `@appdeploy/sdk`) for authentication, APIs, realtime events, storage, and database access. It is **not yet standalone-hostable** from this repository alone. A separate hosting/database migration is required before a GitHub workflow can deploy it independently.
+The backend now includes a storage-backed degraded path for the default Toast Zone, text-message history, member presence and voice-session presence. These fixes are committed here, but they are **not live** until built and deployed. The AppDeploy usage limit previously blocked deployment, so real runtime verification is still outstanding.
 
-## Current known issue
+The code currently uses AppDeploy-specific packages (@appdeploy/client and @appdeploy/sdk) for authentication, API routing, realtime, storage and database access. It is **not independently hostable from GitHub alone**. Running it elsewhere requires replacing those platform-specific dependencies and configuring a persistent database. A clean source upload is not the same as a working deployment, a fact worth remembering before declaring victory.
 
-Production logs show `AppDatabaseGatewayUnavailable` on `/api/messages`, `/api/members`, and `/api/voice/participants`. Do not treat a clean static build or QA snapshot as proof that these live backend routes work; they need runtime verification against a healthy database or a working storage-backed fallback.
+## Security
 
-## Source layout
+The hardcoded admin unlock code was removed from this public source. Configure the AppDeploy secret named ADMIN_CODE before using admin unlock. Never commit secret values.
 
-- `src/` React frontend
-- `backend/` AppDeploy server handlers and realtime subscriptions
-- `tests/tests.json` QA test plan
+Reliable audio and screen sharing may require TURN credentials configured as AppDeploy secrets TURN_URLS, TURN_USERNAME and TURN_CREDENTIAL. STUN alone does not guarantee that every pair of networks can connect. A GitHub push by itself does not deploy the app.
 
-## Local development
+## Layout
 
-The original runtime injects/hosts AppDeploy-specific packages. For an independent local build, first replace those dependencies with a self-hosted API/auth/realtime implementation and configure a persistent database plus TURN credentials for reliable voice/screen sharing.
+- src/: React frontend, ToastLab and Rewards panel
+- backend/: server routes and realtime helpers
+- tests/tests.json: QA test scenarios
