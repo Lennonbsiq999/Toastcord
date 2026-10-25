@@ -15,6 +15,8 @@ Fertig. Dein Browser öffnet Toastcord automatisch.
 - Das schwarze Fenster muss offen bleiben, solange Toastcord läuft. Zum Beenden schliesst du es.
 - Nachrichten und Konten werden im Ordner `data` gespeichert.
 
+- Beim lokalen Start wird das erste registrierte Konto zum Owner von „Toast Zone“ und erhält das Admin-Panel. Bei Online-Deployments wird nicht automatisch ein Admin vergeben.
+
 ## Wichtig
 
 Das startet Toastcord **auf deinem eigenen PC**. Damit Freunde über das Internet beitreten können, muss die App später auf einem Online-Server laufen.
