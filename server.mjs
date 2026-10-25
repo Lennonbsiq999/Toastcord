@@ -383,6 +383,130 @@ export function createAppServer(options = {}) {
           const threads = store.state.threads.filter(t => t.participants.includes(user.id)).map(t => { const otherUserId = t.participants.find(id => id !== user.id) || user.id; return { ...t, otherUserId, otherDisplayName:store.safeUser(store.userById(otherUserId))?.displayName || 'Mitglied' }; });
           sendJson(res, 200, { me:store.safeUser(user), servers, channels, threads, members:servers.flatMap(s => store.members(s.id).map(m => ({...m,serverId:s.id}))), voiceSessions:store.state.voiceSessions }); return;
         }
+        if (pathname === '/api/admin/overview' && req.method === 'GET') {
+          const serverId = url.searchParams.get('serverId') || '';
+          const server = store.state.servers.find(s => s.id === serverId);
+          const role = store.role(serverId, user.id);
+          if (!server || !store.isMember(serverId, user.id) || !['owner','admin'].includes(role)) { sendError(res, 403, 'Das Admin-Panel ist nur für Server-Owner und Admins verfügbar.'); return; }
+          const channels = store.state.channels.filter(c => c.serverId === serverId);
+          const channelIds = new Set(channels.map(c => c.id));
+          const members = store.members(serverId);
+          const messages = store.state.messages.filter(m => m.channelId && channelIds.has(m.channelId) && !m.deleted).slice(-40).reverse().map(m => ({ ...store.safeMessage(m), channelName:channels.find(c => c.id === m.channelId)?.name || 'Kanal' }));
+          const auditLog = (store.state.auditLog || []).filter(entry => entry.serverId === serverId).slice(-30).reverse().map(entry => ({
+            ...entry,
+            actor: store.safeUser(store.userById(entry.actorId)),
+            target: store.safeUser(store.userById(entry.targetId))
+          }));
+          sendJson(res, 200, {
+            server: { ...server, role },
+            channels,
+            members,
+            messages,
+            auditLog,
+            stats: {
+              members: members.length,
+              online: members.filter(m => m.online).length,
+              channels: channels.length,
+              messages: store.state.messages.filter(m => m.channelId && channelIds.has(m.channelId) && !m.deleted).length,
+              inVoice: store.state.voiceSessions.filter(v => v.serverId === serverId).length
+            }
+          }); return;
+        }
+        const adminServerMatch = pathname.match(/^\/api\/admin\/server\/([^/]+)$/);
+        if (adminServerMatch && req.method === 'PATCH') {
+          const serverId = adminServerMatch[1];
+          const server = store.state.servers.find(s => s.id === serverId);
+          if (!server || !store.isMember(serverId, user.id) || store.role(serverId, user.id) !== 'owner') { sendError(res, 403, 'Nur der Server-Owner kann die Servereinstellungen ändern.'); return; }
+          const body = await readBody(req);
+          const name = normalizeName(body.name);
+          const description = normalizeName(body.description).slice(0,160);
+          if (name.length < 2) { sendError(res, 400, 'Der Servername muss mindestens zwei Zeichen haben.'); return; }
+          store.update(() => { server.name = name.slice(0,48); server.description = description; });
+          recordAdminAction(store, { serverId, actorId:user.id, action:'server_updated', details:server.name });
+          broadcast({ type:'server_update', serverId }, c => store.isMember(serverId, c.userId));
+          sendJson(res, 200, { server:{ ...server, role:store.role(serverId,user.id) } }); return;
+        }
+        const adminRoleMatch = pathname.match(/^\/api\/admin\/members\/([^/]+)\/role$/);
+        if (adminRoleMatch && req.method === 'POST') {
+          const body = await readBody(req);
+          const serverId = String(body.serverId || '');
+          const targetId = adminRoleMatch[1];
+          const server = store.state.servers.find(s => s.id === serverId);
+          const role = store.role(serverId,user.id);
+          const targetMembership = store.state.memberships.find(m => m.serverId === serverId && m.userId === targetId);
+          if (!server || !store.isMember(serverId,user.id) || !['owner','admin'].includes(role)) { sendError(res,403,'Keine Berechtigung für die Rollenverwaltung.'); return; }
+          if (!targetMembership) { sendError(res,404,'Mitglied wurde nicht gefunden.'); return; }
+          if (role !== 'owner') { sendError(res,403,'Nur der Owner darf Admin-Rollen vergeben oder entfernen.'); return; }
+          if (targetId === server.ownerId || targetId === user.id) { sendError(res,400,'Die Owner-Rolle kann hier nicht verändert werden.'); return; }
+          const newRole = String(body.role || 'member');
+          if (!['member','admin'].includes(newRole)) { sendError(res,400,'Erlaubt sind nur member oder admin.'); return; }
+          store.update(() => { targetMembership.role = newRole; });
+          recordAdminAction(store,{serverId,actorId:user.id,action:newRole==='admin'?'member_promoted':'member_demoted',targetId,details:store.safeUser(store.userById(targetId))?.username || targetId});
+          broadcast({type:'member_update',serverId},c=>store.isMember(serverId,c.userId));
+          sendJson(res,200,{ok:true,role:newRole}); return;
+        }
+        const adminMemberMatch = pathname.match(/^\/api\/admin\/members\/([^/]+)$/);
+        if (adminMemberMatch && req.method === 'DELETE') {
+          const serverId = url.searchParams.get('serverId') || '';
+          const targetId = adminMemberMatch[1];
+          const server = store.state.servers.find(s => s.id === serverId);
+          const actorRole = store.role(serverId,user.id);
+          const membership = store.state.memberships.find(m => m.serverId === serverId && m.userId === targetId);
+          if (!server || !store.isMember(serverId,user.id) || !['owner','admin'].includes(actorRole)) { sendError(res,403,'Keine Berechtigung für diese Serververwaltung.'); return; }
+          if (!membership) { sendError(res,404,'Mitglied wurde nicht gefunden.'); return; }
+          const targetRole = store.role(serverId,targetId);
+          if (targetId === user.id || targetId === server.ownerId || targetRole === 'owner' || (actorRole !== 'owner' && targetRole === 'admin')) { sendError(res,403,'Du darfst dieses Mitglied nicht entfernen.'); return; }
+          const removedVoice = store.state.voiceSessions.filter(v => v.serverId === serverId && v.userId === targetId);
+          store.update(state => {
+            state.memberships = state.memberships.filter(m => !(m.serverId === serverId && m.userId === targetId));
+            state.voiceSessions = state.voiceSessions.filter(v => !(v.serverId === serverId && v.userId === targetId));
+          });
+          recordAdminAction(store,{serverId,actorId:user.id,action:'member_kicked',targetId,details:store.safeUser(store.userById(targetId))?.username || targetId});
+          for (const voice of removedVoice) sendVoiceState(store,serverId,voice.channelId);
+          broadcast({type:'member_update',serverId},c=>store.isMember(serverId,c.userId));
+          broadcast({type:'server_kicked',serverId,serverName:server.name},c=>c.userId===targetId);
+          sendJson(res,200,{ok:true}); return;
+        }
+        const adminMessageMatch = pathname.match(/^\/api\/admin\/messages\/([^/]+)$/);
+        if (adminMessageMatch && req.method === 'DELETE') {
+          const serverId = url.searchParams.get('serverId') || '';
+          const server = store.state.servers.find(s => s.id === serverId);
+          const role = store.role(serverId,user.id);
+          const message = store.state.messages.find(m => m.id === adminMessageMatch[1] && !m.deleted);
+          const channel = message?.channelId ? store.state.channels.find(c => c.id === message.channelId) : null;
+          if (!server || !store.isMember(serverId,user.id) || !['owner','admin'].includes(role)) { sendError(res,403,'Keine Berechtigung für die Moderation.'); return; }
+          if (!message || !channel || channel.serverId !== serverId) { sendError(res,404,'Nachricht in diesem Server nicht gefunden.'); return; }
+          store.update(() => { message.deleted = true; message.deletedAt = Date.now(); });
+          recordAdminAction(store,{serverId,actorId:user.id,action:'message_deleted',targetId:message.authorId,details:'#'+channel.name+': '+message.text.slice(0,120)});
+          broadcast({type:'message_delete',channelId:channel.id,messageId:message.id},c=>store.isMember(serverId,c.userId));
+          sendJson(res,200,{ok:true}); return;
+        }
+        if (pathname === '/api/voice/join' && req.method === 'POST') {
+          const body = await readBody(req);
+          const channelId = String(body.channelId || '');
+          const channel = store.state.channels.find(c => c.id === channelId && c.kind === 'voice');
+          if (!channel || !store.isMember(channel.serverId,user.id)) { sendError(res,403,'Du hast keinen Zugriff auf diesen Sprachkanal.'); return; }
+          const oldSessions = store.state.voiceSessions.filter(v => v.userId === user.id);
+          store.update(state => {
+            state.voiceSessions = state.voiceSessions.filter(v => v.userId !== user.id);
+            state.voiceSessions.push({userId:user.id,channelId,serverId:channel.serverId,connectionId:null,joinedAt:Date.now()});
+          });
+          for (const old of oldSessions) if (old.channelId !== channelId) sendVoiceState(store,old.serverId,old.channelId);
+          sendVoiceState(store,channel.serverId,channelId);
+          broadcast({type:'member_update',serverId:channel.serverId},c=>store.isMember(channel.serverId,c.userId));
+          sendJson(res,200,{ok:true,channelId,participants:store.state.voiceSessions.filter(v=>v.channelId===channelId).map(v=>({userId:v.userId,displayName:store.userById(v.userId)?.displayName||'Mitglied',channelId:v.channelId}))}); return;
+        }
+        if (pathname === '/api/voice/leave' && req.method === 'POST') {
+          const body = await readBody(req);
+          const channelId = String(body.channelId || '');
+          const sessions = store.state.voiceSessions.filter(v => v.userId===user.id && v.channelId===channelId);
+          store.update(state=>{state.voiceSessions=state.voiceSessions.filter(v=>!(v.userId===user.id && v.channelId===channelId));});
+          for (const session of sessions) {
+            sendVoiceState(store,session.serverId,session.channelId);
+            broadcast({type:'member_update',serverId:session.serverId},c=>store.isMember(session.serverId,c.userId));
+          }
+          sendJson(res,200,{ok:true}); return;
+        }
         if (pathname === '/api/servers' && req.method === 'POST') {
           const body = await readBody(req); const name = normalizeName(body.name);
           if (name.length < 2) { sendError(res, 400, 'Der Servername muss mindestens zwei Zeichen haben.'); return; }
