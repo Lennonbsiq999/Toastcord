@@ -261,6 +261,20 @@ test('direct messages are private and persist for both participants', async () =
   assert.equal(outsider.status,403);
 });
 
+
+test('kicked members lose access and bootstrap does not re-add them', async () => {
+  const kicked=await request('/api/admin/members/'+encodeURIComponent(userB.id)+'?serverId='+encodeURIComponent(serverId),{method:'DELETE',cookie:cookieA});
+  assert.equal(kicked.status,200,JSON.stringify(kicked.json));
+
+  const denied=await request('/api/messages?channelId='+encodeURIComponent(customChannelId),{cookie:cookieB});
+  assert.equal(denied.status,403);
+  const bootstrap=await request('/api/bootstrap',{cookie:cookieB});
+  assert.equal(bootstrap.status,200);
+  assert.ok(!bootstrap.json.servers.some(s=>s.id===serverId),'A kicked member must not silently rejoin during bootstrap.');
+  const overview=await request('/api/admin/overview?serverId='+encodeURIComponent(serverId),{cookie:cookieB});
+  assert.equal(overview.status,403);
+});
+
 test('two clients receive live messages and voice join/leave events', async () => {
   const wsA=await openWebSocket(cookieA);
   const wsB=await openWebSocket(cookieB);
