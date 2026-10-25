@@ -12,3 +12,30 @@
 @media(max-width:1180px){.workspace{grid-template-columns:68px 215px minmax(300px,1fr)}.members-panel{display:none}.chat-history{padding-inline:22px}.auth-layout{grid-template-columns:1fr 440px}.hero-copy h1{font-size:58px}}
 @media(max-width:760px){.auth-layout{grid-template-columns:1fr}.auth-hero{display:none}.auth-card-wrap{min-height:100dvh;border:0;padding:17px;background:radial-gradient(circle at 50% 0,#39325c 0,transparent 38%),#171821}.auth-card{max-width:420px}.workspace{height:100dvh;min-height:0;grid-template-columns:56px minmax(0,1fr)}.server-rail{padding:10px 5px;gap:8px}.rail-logo,.server-icon,.rail-add{width:42px;height:42px;border-radius:14px}.server-icon.active:before{left:-6px}.channel-panel{position:absolute;left:56px;top:0;bottom:0;width:min(290px,calc(100vw - 56px));z-index:40;transform:translateX(-110%);transition:transform .2s ease;box-shadow:15px 0 45px #0005}.workspace.nav-open .channel-panel{transform:translateX(0)}.chat-panel{grid-column:2}.topbar{height:57px;padding:0 11px;gap:7px}.top-search{display:none}.top-channel{gap:7px}.top-channel h2{font-size:12px}.top-channel .topic{display:none}.top-actions{gap:0}.top-actions .icon-button{width:31px;height:31px}.chat-history{padding:17px 12px}.welcome-card h2{font-size:20px}.welcome-card{padding:7px 0 18px;margin-bottom:10px}.message{gap:9px}.message .avatar{width:30px;height:30px;border-radius:10px}.message-meta b{font-size:11px}.message-text{font-size:12px}.message-actions{opacity:1;top:0;right:0;transform:translateY(-50%);background:#303241}.composer-wrap{padding:6px 9px max(12px,env(safe-area-inset-bottom))}.composer{gap:4px;padding:7px}.composer-tool{width:27px;height:29px}.composer-foot{display:none}.rail-bottom .rail-mini{width:38px;height:38px}.profile-dock{padding:9px 5px;justify-content:center}.profile-info,.dock-btns{display:none}.profile-dock .avatar{width:35px;height:35px}.members-panel{display:none}.toastlab-grid{grid-template-columns:1fr}.modal.wide{width:100%}.voice-stage-grid{grid-template-columns:repeat(auto-fit,minmax(105px,1fr))}.voice-tile{min-height:100px}.mobile-only{display:grid!important}.workspace.nav-open:after{content:"";position:absolute;inset:0;background:#0007;z-index:30}.workspace.nav-open .channel-panel{z-index:50}.workspace.nav-open:after{pointer-events:auto}.channel-head{height:57px}.channel-scroll{padding-top:10px}}
 @media(max-height:620px){.auth-card-wrap{align-items:start;overflow:auto}.auth-card{margin:auto}.hero-copy h1{font-size:52px}}
+
+
+/* Toastcord polish: responsive message reactions, depth and subtle motion */
+.message{padding:10px 10px;margin:2px -10px;transition:background .16s ease,transform .16s ease}
+.message:hover{background:linear-gradient(95deg,#ffffff07,#8b82f60a 72%,transparent);transform:translateX(1px)}
+.message-reactions{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:7px;min-height:22px}
+.reaction-chip,.reaction-add{height:24px;min-width:29px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:8px;background:#303241;border:1px solid #ffffff0c;color:#e7e8f2;font-size:12px;transition:transform .14s ease,background .14s ease,border-color .14s ease}
+.reaction-chip span{font-size:10px;color:#bfc2d0;font-variant-numeric:tabular-nums}
+.reaction-chip:hover,.reaction-add:hover{transform:translateY(-1px);background:#3e4054;border-color:#7770d7}
+.reaction-chip.active{background:#45406f;border-color:#8b82f6;box-shadow:0 0 0 1px #8b82f62b inset}
+.reaction-chip.active span{color:#fff}
+.reaction-add{opacity:.45;border-style:dashed;background:transparent;font-size:14px}
+.message:hover .reaction-add,.reaction-add:focus-visible{opacity:1}
+.reaction-picker{display:flex;gap:3px;flex-wrap:wrap;width:min(100%,330px);margin-top:7px;padding:7px;background:#1a1b25;border:1px solid #45485d;border-radius:11px;box-shadow:0 12px 30px #0005;animation:reactionpop .13s ease-out}
+.reaction-picker button{width:30px;height:30px;border-radius:8px;background:transparent;font-size:16px;display:grid;place-items:center}
+.reaction-picker button:hover{background:#3b3d52;transform:scale(1.08)}
+@keyframes reactionpop{from{opacity:0;transform:translateY(-4px) scale(.98)}to{opacity:1;transform:none}}
+.topbar{backdrop-filter:blur(18px)}
+.server-icon,.rail-logo,.rail-add{box-shadow:0 7px 20px #0002}
+.channel-row,.icon-button,.rail-mini,.voice-control{transition:background .14s ease,color .14s ease,transform .14s ease}
+.channel-row:active,.icon-button:active,.rail-mini:active{transform:scale(.97)}
+.composer{transition:border-color .18s ease,box-shadow .18s ease}
+.composer:focus-within{box-shadow:0 0 0 3px #8b82f623,0 12px 32px #0002}
+.modal{animation:modalrise .16s ease-out}
+@keyframes modalrise{from{opacity:0;transform:translateY(7px) scale(.99)}to{opacity:1;transform:none}}
+@media(max-width:760px){.message{margin:2px -4px;padding:10px 4px}.reaction-add{opacity:.9}.reaction-picker{width:100%}.message-reactions{gap:4px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
