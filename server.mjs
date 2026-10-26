@@ -404,6 +404,28 @@ export function createAppServer(options = {}) {
         }
         const user = store.sessionUser(req);
         if (!user) { sendError(res, 401, 'Deine Sitzung ist abgelaufen. Melde dich erneut an.'); return; }
+        if (pathname === '/api/local/claim-owner' && req.method === 'POST') {
+          const address = req.socket.remoteAddress || '';
+          const isLoopback = address === '::1' || address === '127.0.0.1' || address.startsWith('127.') || address === '::ffff:127.0.0.1' || address.startsWith('::ffff:127.');
+          if (!localMode || !isLoopback) { sendError(res, 403, 'Die lokale Wiederherstellung ist nur auf dem lokalen Toastcord-PC erlaubt.'); return; }
+          const body = await readBody(req);
+          const serverId = String(body.serverId || 'toast-zone');
+          const targetServer = store.state.servers.find(s => s.id === serverId);
+          if (!targetServer || !store.isMember(serverId, user.id)) { sendError(res, 403, 'Du musst Mitglied dieses Servers sein.'); return; }
+          store.update(state => {
+            targetServer.ownerId = user.id;
+            for (const membership of state.memberships.filter(m => m.serverId === serverId)) {
+              if (membership.userId === user.id) membership.role = 'owner';
+              else if (membership.role === 'owner') membership.role = 'member';
+            }
+            if (!state.memberships.some(m => m.serverId === serverId && m.userId === user.id)) {
+              state.memberships.push({ id:newId('mem_'), serverId, userId:user.id, role:'owner', joinedAt:Date.now() });
+            }
+          });
+          recordAdminAction(store, { serverId, actorId:user.id, action:'owner_recovered', details:'Lokaler Admin-Zugang wiederhergestellt' });
+          broadcast({type:'server_update',serverId}, c => store.isMember(serverId,c.userId));
+          sendJson(res, 200, {ok:true,server:{...targetServer,role:'owner'}}); return;
+        }
         if (pathname === '/api/voice/config') {
           const turnUrls = String(process.env.TURN_URLS || '').split(',').map(v => v.trim()).filter(Boolean);
           const turnUsername = process.env.TURN_USERNAME || '';
@@ -417,7 +439,7 @@ export function createAppServer(options = {}) {
           const serverIds = new Set(servers.map(s => s.id));
           const channels = store.state.channels.filter(c => serverIds.has(c.serverId));
           const threads = store.state.threads.filter(t => t.participants.includes(user.id)).map(t => { const otherUserId = t.participants.find(id => id !== user.id) || user.id; return { ...t, otherUserId, otherDisplayName:store.safeUser(store.userById(otherUserId))?.displayName || 'Mitglied' }; });
-          sendJson(res, 200, { me:store.safeUser(user), servers, channels, threads, members:servers.flatMap(s => store.members(s.id).map(m => ({...m,serverId:s.id}))), voiceSessions:store.state.voiceSessions }); return;
+          sendJson(res, 200, { me:store.safeUser(user), localMode, servers, channels, threads, members:servers.flatMap(s => store.members(s.id).map(m => ({...m,serverId:s.id}))), voiceSessions:store.state.voiceSessions }); return;
         }
         if (pathname === '/api/admin/overview' && req.method === 'GET') {
           const serverId = url.searchParams.get('serverId') || '';
