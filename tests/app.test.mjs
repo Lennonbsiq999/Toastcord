@@ -390,3 +390,9 @@ test('password hashing and input normalization', async () => {
   assert.equal(normalizeName('  Toast  Pilot\n'), 'Toast Pilot');
   assert.equal(sanitizeMessage('  hello\u0000 world  '), 'hello world');
 });
+
+test('admin panel renderer returns HTML synchronously for renderModal', () => {
+  const appSource = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(appSource, /function renderAdminPanel\(\)/);
+  assert.doesNotMatch(appSource, /async function renderAdminPanel\(\)/);
+});
