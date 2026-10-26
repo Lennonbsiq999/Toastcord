@@ -13,6 +13,7 @@ Fertig. Dein Browser öffnet Toastcord automatisch.
 - Beim ersten Start lädt Toastcord die nötige Laufzeit automatisch von der offiziellen Node.js-Webseite herunter und prüft den Download.
 - Du musst nichts installieren, keine Befehle eingeben und kein Docker verwenden.
 - Das schwarze Fenster muss offen bleiben, solange Toastcord läuft. Zum Beenden schliesst du es.
+- Der Starter sucht automatisch einen freien Port zwischen 3000 und 3010. So öffnet er bei einer noch laufenden alten Instanz die neue Version auf einem anderen Port.
 - Nachrichten und Konten werden im Ordner `data` gespeichert.
 
 - Beim lokalen Start wird das erste registrierte Konto zum Owner von „Toast Zone“. Falls dein Konto lokal keine Admin-Rechte hat, öffne „Admin-Panel öffnen“ und wähle „Lokalen Server als Owner übernehmen“. Diese Wiederherstellung ist nur vom selben PC in einer lokalen Installation erlaubt. Bei Online-Deployments wird kein Admin-Zugriff automatisch vergeben.
