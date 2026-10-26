@@ -330,14 +330,22 @@ export function createAppServer(options = {}) {
   const store = new JsonStore(dataDir);
   const localMode = options.localMode ?? process.env.TOASTCORD_LOCAL_MODE === 'true';
   if (localMode) {
-    const homeServer = store.state.servers.find(server => server.id === 'toast-zone' && server.ownerId === 'system');
+    const homeServer = store.state.servers.find(server => server.id === 'toast-zone');
     const firstUser = store.state.users[0];
     if (homeServer && firstUser) {
-      homeServer.ownerId = firstUser.id;
-      let membership = store.state.memberships.find(m => m.serverId === homeServer.id && m.userId === firstUser.id);
-      if (!membership) { membership = { id:newId('mem_'), serverId:homeServer.id, userId:firstUser.id, role:'owner', joinedAt:firstUser.createdAt || Date.now() }; store.state.memberships.push(membership); }
-      else membership.role = 'owner';
-      store.flush();
+      const ownerExists = store.state.users.some(user => user.id === homeServer.ownerId);
+      if (homeServer.ownerId === 'system' || !ownerExists) homeServer.ownerId = firstUser.id;
+      const owner = store.state.users.find(user => user.id === homeServer.ownerId);
+      if (owner) {
+        let membership = store.state.memberships.find(m => m.serverId === homeServer.id && m.userId === owner.id);
+        if (!membership) {
+          membership = { id:newId('mem_'), serverId:homeServer.id, userId:owner.id, role:'owner', joinedAt:owner.createdAt || Date.now() };
+          store.state.memberships.push(membership);
+        } else {
+          membership.role = 'owner';
+        }
+        store.flush();
+      }
     }
   }
   if (store.state.voiceSessions.length) { store.state.voiceSessions = []; store.flush(); }
@@ -687,7 +695,7 @@ export function createAppServer(options = {}) {
       let filePath = pathname === '/' ? path.join(PUBLIC,'index.html') : path.resolve(PUBLIC, '.' + pathname);
       if (!filePath.startsWith(PUBLIC + path.sep) && filePath !== path.join(PUBLIC,'index.html')) { sendError(res,403,'Verboten.'); return; }
       if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) { sendError(res,404,'Datei nicht gefunden.'); return; }
-      const content=fs.readFileSync(filePath); res.writeHead(200,{'Content-Type':MIME[path.extname(filePath)]||'application/octet-stream','Content-Length':content.length,'X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'same-origin','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",'Cache-Control':path.extname(filePath)==='.html'?'no-store':'public, max-age=300'}); if(req.method==='HEAD')res.end();else res.end(content);
+      const content=fs.readFileSync(filePath); res.writeHead(200,{'Content-Type':MIME[path.extname(filePath)]||'application/octet-stream','Content-Length':content.length,'X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'same-origin','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",'Cache-Control':['.html','.js','.css'].includes(path.extname(filePath))?'no-store':'public, max-age=300'}); if(req.method==='HEAD')res.end();else res.end(content);
     } catch (err) {
       console.error(err);
       if (!res.headersSent) sendError(res, err.status || 500, err.status ? err.message : 'Interner Serverfehler. Bitte prüfe die Serverlogs.');
