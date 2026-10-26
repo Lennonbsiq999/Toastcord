@@ -400,6 +400,42 @@ test('local startup repairs an orphaned default-server owner and restores the ow
   }
 });
 
+test('local member can recover the admin panel from the same PC', async () => {
+  const localDir=fs.mkdtempSync(path.join(os.tmpdir(),'toastcord-admin-recovery-'));
+  const localApp=createAppServer({dataDir:localDir,secureCookie:false,localMode:true});
+  try {
+    await new Promise(resolve=>localApp.server.listen(0,'127.0.0.1',resolve));
+    const localBase='http://127.0.0.1:'+localApp.server.address().port;
+    const register=async username=>fetch(localBase+'/api/auth/register',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username,password:'LocalRecovery!123'})
+    });
+    const first=await register('RecoveryOwner');
+    assert.equal(first.status,201);
+    const second=await register('RecoveryMember');
+    assert.equal(second.status,201);
+    const cookie=second.headers.get('set-cookie').split(';')[0];
+    const boot=await fetch(localBase+'/api/bootstrap',{headers:{Cookie:cookie}}).then(r=>r.json());
+    assert.equal(boot.localMode,true);
+    assert.equal(boot.servers.find(s=>s.id==='toast-zone').role,'member');
+    const denied=await fetch(localBase+'/api/admin/overview?serverId=toast-zone',{headers:{Cookie:cookie}});
+    assert.equal(denied.status,403);
+    const claim=await fetch(localBase+'/api/local/claim-owner',{
+      method:'POST',headers:{'Content-Type':'application/json',Cookie:cookie},
+      body:JSON.stringify({serverId:'toast-zone'})
+    });
+    const claimData=await claim.json();
+    assert.equal(claim.status,200,JSON.stringify(claimData));
+    const after=await fetch(localBase+'/api/bootstrap',{headers:{Cookie:cookie}}).then(r=>r.json());
+    assert.equal(after.servers.find(s=>s.id==='toast-zone').role,'owner');
+    const panel=await fetch(localBase+'/api/admin/overview?serverId=toast-zone',{headers:{Cookie:cookie}});
+    assert.equal(panel.status,200);
+  } finally {
+    if(localApp.server.listening){localApp.server.closeIdleConnections();localApp.server.closeAllConnections();await new Promise(resolve=>localApp.server.close(resolve));}
+    fs.rmSync(localDir,{recursive:true,force:true});
+  }
+});
+
 test('password hashing and input normalization', async () => {
   const encoded = await hashPassword('correct horse battery staple');
   assert.match(encoded, /^scrypt\$/);
@@ -415,4 +451,6 @@ test('admin panel renderer returns HTML synchronously for renderModal', () => {
   assert.doesNotMatch(appSource, /async function renderAdminPanel\(\)/);
   assert.match(appSource, /data-action="admin-panel"/);
   assert.match(appSource, /Admin-Panel öffnen/);
+  assert.match(appSource, /data-action="claim-local-owner"/);
+  assert.match(appSource, /state.localMode=!!data.localMode/);
 });
