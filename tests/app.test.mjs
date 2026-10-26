@@ -453,8 +453,8 @@ test('admin panel renderer returns HTML synchronously for renderModal', () => {
   assert.match(appSource, /Admin-Panel öffnen/);
   assert.match(appSource, /data-action="claim-local-owner"/);
   assert.match(appSource, /state.localMode=!!data.localMode/);
-  assert.match(appSource, /Build 26\\.10\\.26-2/);
+  assert.ok(appSource.includes('Build 26.10.26-2'));
   const launcherSource = fs.readFileSync(new URL('../Start-Toastcord.bat', import.meta.url), 'utf8');
   assert.match(launcherSource, /:choose_port/);
-  assert.match(launcherSource, /\\$p=%PORT%/);
+  assert.ok(launcherSource.includes('$p=%PORT%'));
 });
