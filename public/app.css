@@ -67,7 +67,7 @@
 
 
 /* Server Admin Panel */
-.admin-shortcut{color:var(--accent2)}
+.admin-shortcut{color:var(--accent2)}.server-quick-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.admin-launch{color:var(--accent2);border:1px solid #8b82f655}.admin-launch:hover{background:#403a62;color:#fff}
 .admin-loading{min-height:180px;display:grid;place-content:center;justify-items:center;gap:14px;color:var(--muted)}
 .admin-loading p{font-size:12px;margin:0}
 .admin-error-banner{background:#422a31;color:#ffbbc3}
