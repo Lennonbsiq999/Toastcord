@@ -515,10 +515,18 @@ export function createAppServer(options = {}) {
           const channel = store.state.channels.find(c => c.id === channelId && c.kind === 'voice');
           if (!channel || !store.isMember(channel.serverId,user.id)) { sendError(res,403,'Du hast keinen Zugriff auf diesen Sprachkanal.'); return; }
           const oldSessions = store.state.voiceSessions.filter(v => v.userId === user.id);
+          // Link the REST join to an already-open WebSocket immediately. Otherwise a fast
+          // disconnect can leave a connectionId:null session that the WS cleanup cannot own.
+          const liveClient = [...liveSockets].reverse().find(c => c.userId === user.id && !c.closed && !c.socket.destroyed) || null;
           store.update(state => {
             state.voiceSessions = state.voiceSessions.filter(v => v.userId !== user.id);
-            state.voiceSessions.push({userId:user.id,channelId,serverId:channel.serverId,connectionId:null,joinedAt:Date.now()});
+            state.voiceSessions.push({userId:user.id,channelId,serverId:channel.serverId,connectionId:liveClient?.connectionId || null,joinedAt:Date.now()});
           });
+          if (liveClient) {
+            for (const old of oldSessions) liveClient.joinedVoice?.delete(old.channelId);
+            liveClient.joinedVoice ||= new Set();
+            liveClient.joinedVoice.add(channelId);
+          }
           for (const old of oldSessions) if (old.channelId !== channelId) sendVoiceState(store,old.serverId,old.channelId);
           sendVoiceState(store,channel.serverId,channelId);
           broadcast({type:'member_update',serverId:channel.serverId},c=>store.isMember(channel.serverId,c.userId));
@@ -529,6 +537,7 @@ export function createAppServer(options = {}) {
           const channelId = String(body.channelId || '');
           const sessions = store.state.voiceSessions.filter(v => v.userId===user.id && v.channelId===channelId);
           store.update(state=>{state.voiceSessions=state.voiceSessions.filter(v=>!(v.userId===user.id && v.channelId===channelId));});
+          for (const client of liveSockets) if (client.userId===user.id) client.joinedVoice?.delete(channelId);
           for (const session of sessions) {
             sendVoiceState(store,session.serverId,session.channelId);
             broadcast({type:'member_update',serverId:session.serverId},c=>store.isMember(session.serverId,c.userId));
