@@ -25,23 +25,37 @@ if not defined NODE_CMD (
 )
 
 set "PORT=3000"
+:choose_port
+netstat -ano | findstr /R /C:":%PORT% .*LISTENING" >nul
+if not errorlevel 1 (
+  set /a PORT+=1
+  if !PORT! LEQ 3010 goto choose_port
+  goto no_free_port
+)
 set "HOST=127.0.0.1"
 set "TOASTCORD_LOCAL_MODE=true"
 set "TOASTCORD_DATA_DIR=%~dp0data"
 if not exist "data" mkdir "data"
 
 echo.
-echo Toastcord startet. Der Browser oeffnet sich automatisch.
+echo Toastcord startet auf Port %PORT%. Der Browser oeffnet sich automatisch.
 echo Dieses schwarze Fenster offen lassen, solange du Toastcord nutzt.
 echo Zum Beenden dieses Fenster schliessen oder STRG+C druecken.
 echo.
-start "" powershell -NoProfile -WindowStyle Hidden -Command "$u='http://127.0.0.1:3000/healthz'; for($i=0;$i -lt 40;$i++){try{$x=Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 $u;if($x.StatusCode -eq 200){Start-Process 'http://127.0.0.1:3000';exit 0}}catch{};Start-Sleep -Milliseconds 500};Start-Process 'http://127.0.0.1:3000'"
+start "" powershell -NoProfile -WindowStyle Hidden -Command "$p=%PORT%; $u=('http://127.0.0.1:'+$p+'/healthz'); for($i=0;$i -lt 40;$i++){try{$x=Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 $u;if($x.StatusCode -eq 200){Start-Process ('http://127.0.0.1:'+$p);exit 0}}catch{};Start-Sleep -Milliseconds 500};Start-Process ('http://127.0.0.1:'+$p)"
 "%NODE_CMD%" server.mjs
 echo.
 echo Toastcord wurde beendet oder konnte nicht gestartet werden.
-echo Falls Port 3000 schon belegt ist, schliesse das andere Programm und versuche es erneut.
+echo Falls der Start fehlschlaegt, pruefe, ob ein Port zwischen 3000 und 3010 frei ist.
 pause
 exit /b 0
+
+:no_free_port
+echo.
+echo Kein freier Port zwischen 3000 und 3010 gefunden.
+echo Bitte schliesse eine andere Toastcord-Instanz oder ein Programm, das diese Ports verwendet.
+pause
+exit /b 1
 
 :download_failed
 echo.
