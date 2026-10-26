@@ -67,7 +67,7 @@
 
 
 /* Server Admin Panel */
-.admin-shortcut{color:var(--accent2)}.server-quick-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.admin-launch{color:var(--accent2);border:1px solid #8b82f655}.admin-launch:hover{background:#403a62;color:#fff}
+.admin-shortcut{color:var(--accent2)}.server-quick-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.admin-launch{color:var(--accent2);border:1px solid #8b82f655}.admin-launch:hover{background:#403a62;color:#fff}.admin-recovery{margin-top:16px;padding:18px;border:1px solid #8b82f655;border-radius:12px;background:#292741}.admin-recovery h3{margin:0 0 8px;font-size:14px}.admin-recovery p{font-size:12px;line-height:1.65;color:#b6b7cc;margin:0 0 14px}
 .admin-loading{min-height:180px;display:grid;place-content:center;justify-items:center;gap:14px;color:var(--muted)}
 .admin-loading p{font-size:12px;margin:0}
 .admin-error-banner{background:#422a31;color:#ffbbc3}
