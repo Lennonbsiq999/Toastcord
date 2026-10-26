@@ -306,6 +306,28 @@ test('two clients receive live messages and voice join/leave events', async () =
     await Promise.all([wsA.close(),wsB.close()]);
   }
 });
+test('REST voice join is tied to its WebSocket and disconnect clears presence', async () => {
+  const wsA=await openWebSocket(cookieA);
+  const wsB=await openWebSocket(cookieB);
+  try {
+    await Promise.all([wsA.waitFor(m=>m.type==='connected'),wsB.waitFor(m=>m.type==='connected')]);
+    const joined=await request('/api/voice/join',{method:'POST',cookie:cookieA,body:{channelId:'ch-lobby'}});
+    assert.equal(joined.status,200,JSON.stringify(joined.json));
+    const visible=await wsB.waitFor(m=>m.type==='voice_state'&&m.channelId==='ch-lobby'&&m.participants.some(p=>p.userId===userA.id));
+    assert.ok(visible.participants.some(p=>p.userId===userA.id));
+
+    await wsA.close();
+    const disconnected=await wsB.waitFor(m=>m.type==='voice_state'&&m.channelId==='ch-lobby'&&!m.participants.some(p=>p.userId===userA.id));
+    assert.ok(!disconnected.participants.some(p=>p.userId===userA.id));
+    const participants=await request('/api/voice/participants?channelId=ch-lobby',{cookie:cookieB});
+    assert.equal(participants.status,200);
+    assert.ok(!participants.json.participants.some(p=>p.userId===userA.id),'A disconnected REST-joined user must not remain in the voice room.');
+  } finally {
+    await request('/api/voice/leave',{method:'POST',cookie:cookieB,body:{channelId:'ch-lobby'}}).catch(()=>{});
+    await Promise.all([wsA.close(),wsB.close()]);
+  }
+});
+
 test('voice config is authenticated and returns ICE configuration', async () => {
   assert.equal((await request('/api/voice/config')).status, 401);
   const response = await request('/api/voice/config', {cookie:cookieA});
