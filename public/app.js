@@ -14,7 +14,7 @@ const state = {
   onlineIds: new Set(), messageSearch: '', reactionTargetMessageId: '',
   adminData: null, adminLoading: false, adminError: '',
 };
-let liveSyncTimer = null, liveSyncBusy = false, lastVoiceSyncAt = 0;
+let liveSyncTimer = null, liveMessageSyncBusy = false, liveVoiceSyncBusy = false, lastVoiceSyncAt = 0;
 const REACTION_EMOJIS = ['👍','❤️','😂','🔥','🎉','🍞','👀','🤔','💀','🚀'];
 let pendingSubmit = false;
 
@@ -271,54 +271,70 @@ async function saveAdminServer(form) {
 }
 function startLiveSync() {
   if(liveSyncTimer) clearInterval(liveSyncTimer);
-  liveSyncTimer=setInterval(()=>refreshLiveState().catch(e=>console.debug('Live sync retry',e)),1600);
+  liveSyncTimer=setInterval(refreshLiveState,1200);
+  refreshLiveState();
 }
 function sameMessages(a,b) {
   return a.length===b.length && a.every((m,i)=>m.id===b[i]?.id && m.text===b[i]?.text && m.editedAt===b[i]?.editedAt && JSON.stringify(m.reactions||{})===JSON.stringify(b[i]?.reactions||{}));
 }
-async function refreshLiveState() {
-  if(!state.me||liveSyncBusy)return;
-  liveSyncBusy=true;
+async function syncLiveMessages() {
+  if(!state.me||liveMessageSyncBusy)return;
+  const mode=state.mode;
+  const thread=mode==='dm'?state.threads.find(t=>t.id===state.activeThreadId):null;
+  const channel=mode==='channel'?currentChannel():null;
+  if(mode==='dm'&&!thread)return;
+  if(mode==='channel'&&channel?.kind!=='text')return;
+  const id=mode==='dm'?thread.id:channel.id;
+  liveMessageSyncBusy=true;
+  try {
+    const d=mode==='dm'
+      ? await api('/api/dm/messages?threadId='+encodeURIComponent(id))
+      : await api('/api/messages?channelId='+encodeURIComponent(id));
+    // A slow response from the previous view must never overwrite the currently open chat.
+    if(state.mode!==mode || (mode==='dm'?state.activeThreadId!==id:state.activeChannelId!==id))return;
+    const next=d.messages||[];
+    if(!sameMessages(state.messages,next)) {
+      state.messages=next;
+      if(!state.modal)render();
+    }
+  } catch(e) { console.debug('Live message sync failed; retrying',e); }
+  finally {liveMessageSyncBusy=false;}
+}
+async function syncLiveVoicePresence() {
+  if(!state.me||liveVoiceSyncBusy||Date.now()-lastVoiceSyncAt<2200)return;
+  const serverId=currentServer()?.id;
+  if(!serverId)return;
+  const voiceChannels=state.channels.filter(c=>c.serverId===serverId&&c.kind==='voice');
+  lastVoiceSyncAt=Date.now();
+  liveVoiceSyncBusy=true;
   let shouldRender=false;
   try {
-    if(state.mode==='dm') {
-      const thread=state.threads.find(t=>t.id===state.activeThreadId);
-      if(thread) {
-        const d=await api('/api/dm/messages?threadId='+encodeURIComponent(thread.id));
-        const next=d.messages||[];
-        if(!sameMessages(state.messages,next)){state.messages=next;shouldRender=true;}
-      }
-    } else {
-      const channel=currentChannel();
-      if(channel?.kind==='text') {
-        const d=await api('/api/messages?channelId='+encodeURIComponent(channel.id));
-        const next=d.messages||[];
-        if(!sameMessages(state.messages,next)){state.messages=next;shouldRender=true;}
-      }
-    }
-    if(Date.now()-lastVoiceSyncAt>2400) {
-      lastVoiceSyncAt=Date.now();
-      const server=currentServer();
-      const voiceChannels=state.channels.filter(c=>c.serverId===server?.id&&c.kind==='voice');
-      const results=await Promise.all(voiceChannels.map(async channel=>{
-        try {return {channelId:channel.id,participants:(await api('/api/voice/participants?channelId='+encodeURIComponent(channel.id))).participants||[]};}
-        catch {return null;}
-      }));
-      for(const result of results.filter(Boolean)) {
-        const previous=state.voiceParticipants[result.channelId]||[];
-        const next=result.participants;
-        const before=previous.map(p=>p.userId).sort().join(',');
-        const after=next.map(p=>p.userId).sort().join(',');
-        if(before!==after || previous.some(p=>next.find(n=>n.userId===p.userId)?.displayName!==p.displayName)) {
-          state.voiceParticipants[result.channelId]=next;
-          if(state.voiceChannelId===result.channelId) syncVoicePeers(next);
-          shouldRender=true;
-        }
+    const results=await Promise.all(voiceChannels.map(async channel=>{
+      try { return {channelId:channel.id,participants:(await api('/api/voice/participants?channelId='+encodeURIComponent(channel.id))).participants||[]}; }
+      catch(e) { console.debug('Voice presence sync failed for '+channel.id,e); return null; }
+    }));
+    // Ignore results if the user changed servers while the requests were in flight.
+    if(state.activeServerId!==serverId)return;
+    for(const result of results.filter(Boolean)) {
+      const previous=state.voiceParticipants[result.channelId]||[];
+      const next=result.participants;
+      const before=previous.map(p=>p.userId).sort().join(',');
+      const after=next.map(p=>p.userId).sort().join(',');
+      if(before!==after || previous.some(p=>next.find(n=>n.userId===p.userId)?.displayName!==p.displayName)) {
+        state.voiceParticipants[result.channelId]=next;
+        if(state.voiceChannelId===result.channelId)syncVoicePeers(next);
+        shouldRender=true;
       }
     }
     if(shouldRender&&!state.modal)render();
-  } catch(e) { console.debug('Live sync failed; retrying',e); }
-  finally {liveSyncBusy=false;}
+  } catch(e) { console.debug('Live voice sync failed; retrying',e); }
+  finally {liveVoiceSyncBusy=false;}
+}
+function refreshLiveState() {
+  if(!state.me)return;
+  // A slow/failed message request no longer blocks independent voice presence updates.
+  void syncLiveMessages();
+  void syncLiveVoicePresence();
 }
 
 async function authenticate(form) {
