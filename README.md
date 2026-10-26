@@ -15,7 +15,7 @@ Fertig. Dein Browser öffnet Toastcord automatisch.
 - Das schwarze Fenster muss offen bleiben, solange Toastcord läuft. Zum Beenden schliesst du es.
 - Nachrichten und Konten werden im Ordner `data` gespeichert.
 
-- Beim lokalen Start wird das erste registrierte Konto zum Owner von „Toast Zone“ und erhält das Admin-Panel. Bei Online-Deployments wird nicht automatisch ein Admin vergeben.
+- Beim lokalen Start wird das erste registrierte Konto zum Owner von „Toast Zone“ und erhält das Admin-Panel. Wenn ein gespeicherter Owner nicht mehr existiert, wird die Eigentümerschaft lokal auf das erste Konto wiederhergestellt. Bei Online-Deployments wird nicht automatisch ein Admin vergeben.
 
 ## Wichtig
 
@@ -25,7 +25,7 @@ Das startet Toastcord **auf deinem eigenen PC**. Damit Freunde über das Interne
 
 Chat mit gespeicherten Nachrichten, Konten, Server und Kanäle, Mitgliederliste, Direktnachrichten, **Live-Emoji-Reaktionen**, WebSocket-Liveupdates mit REST-Synchronisierung als Rückfallebene, Sprachkanäle mit WebRTC sowie ToastLab.
 
-Owner und Admins eigener Server bekommen über das Zahnrad neben dem Servernamen ein Admin-Panel mit Mitglieder- und Rollenverwaltung, Servereinstellungen, Nachrichtenmoderation, Live-Statistiken und Audit-Log. Nur der Owner darf Admin-Rechte vergeben oder entfernen. Entfernte Mitglieder verlieren den Kanalzugriff auch nach dem Neuladen.
+Owner und Admins eigener Server bekommen über die Schaltfläche **„Admin-Panel öffnen“** im Serverbereich oder das Zahnrad neben dem Servernamen ein Admin-Panel mit Mitglieder- und Rollenverwaltung, Servereinstellungen, Nachrichtenmoderation, Live-Statistiken und Audit-Log. Nur der Owner darf Admin-Rechte vergeben oder entfernen. Entfernte Mitglieder verlieren den Kanalzugriff auch nach dem Neuladen.
 
 ## Tests
 
