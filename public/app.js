@@ -208,7 +208,7 @@ function renderToastLab() {
   </div>`,true);
 }
 
-async function renderAdminPanel() {
+function renderAdminPanel() {
   if (state.adminLoading) return modalShell('Admin-Panel · '+(currentServer()?.name||'Server'), '<div class="admin-loading"><div class="loading-line"><span></span></div><p>Serverdaten werden geladen…</p></div>', true);
   if (state.adminError || !state.adminData) return modalShell('Admin-Panel', '<div class="system-banner admin-error-banner">'+esc(state.adminError||'Noch keine Serverdaten geladen.')+'</div><button class="primary-btn" data-action="admin-refresh">Erneut versuchen</button>', true);
   const data=state.adminData, server=data.server, owner=server.role==='owner';
