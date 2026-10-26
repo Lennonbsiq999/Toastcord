@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import { createHash, randomBytes } from 'node:crypto';
-import { createAppServer, hashPassword, verifyPassword, normalizeName, sanitizeMessage } from '../server.mjs';
+import { createAppServer, createDefaultState, hashPassword, verifyPassword, normalizeName, sanitizeMessage } from '../server.mjs';
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toastcord-test-'));
 let app;
@@ -382,6 +382,24 @@ test('local setup gives the first account owner access to the default server onl
   }
 });
 
+test('local startup repairs an orphaned default-server owner and restores the owner membership', () => {
+  const localDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toastcord-owner-recovery-'));
+  try {
+    const state = createDefaultState();
+    const firstUser = { id:'recovery-first-user', username:'RecoveryFirst', displayName:'Recovery First', passwordHash:'unused-test-hash', status:'online', avatarColor:'#f4a261', createdAt:Date.now() };
+    state.users.push(firstUser);
+    state.servers.find(server => server.id === 'toast-zone').ownerId = 'deleted-user-id';
+    fs.writeFileSync(path.join(localDir, 'toastcord.json'), JSON.stringify(state));
+    const localApp = createAppServer({ dataDir:localDir, secureCookie:false, localMode:true });
+    const homeServer = localApp.store.state.servers.find(server => server.id === 'toast-zone');
+    assert.equal(homeServer.ownerId, firstUser.id);
+    assert.equal(localApp.store.role('toast-zone', firstUser.id), 'owner');
+    assert.ok(localApp.store.state.memberships.some(m => m.serverId === 'toast-zone' && m.userId === firstUser.id && m.role === 'owner'));
+  } finally {
+    fs.rmSync(localDir, { recursive:true, force:true });
+  }
+});
+
 test('password hashing and input normalization', async () => {
   const encoded = await hashPassword('correct horse battery staple');
   assert.match(encoded, /^scrypt\$/);
@@ -395,4 +413,6 @@ test('admin panel renderer returns HTML synchronously for renderModal', () => {
   const appSource = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(appSource, /function renderAdminPanel\(\)/);
   assert.doesNotMatch(appSource, /async function renderAdminPanel\(\)/);
+  assert.match(appSource, /data-action="admin-panel"/);
+  assert.match(appSource, /Admin-Panel öffnen/);
 });
