@@ -12,7 +12,7 @@ const state = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }], turnConfigured: false,
   muted: false, focusMode: false, bookmarks: new Set(), notes: '', theme: 'toast',
   onlineIds: new Set(), messageSearch: '', reactionTargetMessageId: '',
-  adminData: null, adminLoading: false, adminError: '',
+  adminData: null, adminLoading: false, adminError: '', localMode: false,
 };
 let liveSyncTimer = null, liveMessageSyncBusy = false, liveVoiceSyncBusy = false, lastVoiceSyncAt = 0;
 const REACTION_EMOJIS = ['👍','❤️','😂','🔥','🎉','🍞','👀','🤔','💀','🚀'];
@@ -102,7 +102,7 @@ function renderChannelPanel() {
   return `<aside class="channel-panel">
     <div class="channel-head"><strong>${esc(server?.name || 'Toastcord')}</strong>${canManage?'<button class="icon-button admin-shortcut" data-action="admin-panel" title="Admin-Panel">⚙</button>':''}<button class="icon-button" data-action="server-menu" title="Server">⌄</button></div>
     <div class="channel-scroll">
-      <div class="channel-about"><div class="server-name">${esc(server?.name || 'Community')}</div><p>${esc(server?.description || 'Dein Raum für Gespräche und gemeinsame Projekte.')}</p><div class="server-quick-actions"><button class="small-action" data-action="invite">Einladung teilen ↗</button>${canManage?'<button class="small-action admin-launch" data-action="admin-panel">⚙ Admin-Panel öffnen</button>':''}</div></div>
+      <div class="channel-about"><div class="server-name">${esc(server?.name || 'Community')}</div><p>${esc(server?.description || 'Dein Raum für Gespräche und gemeinsame Projekte.')}</p><div class="server-quick-actions"><button class="small-action" data-action="invite">Einladung teilen ↗</button><button class="small-action admin-launch" data-action="admin-panel">⚙ Admin-Panel öffnen</button></div></div>
       <div class="group-label">Textkanäle ${canManage?'<button data-action="modal" data-modal="create-channel" data-kind="text" title="Textkanal hinzufügen">+</button>':''}</div>
       ${text.map(c=>`<div class="channel-row ${c.id===state.activeChannelId?'active':''}" data-action="channel" data-id="${esc(c.id)}"><span class="ch-icon">#</span><span class="ch-name">${esc(c.name)}</span><span class="ch-more">···</span></div>`).join('') || '<div class="members-empty">Noch keine Textkanäle.</div>'}
       <div class="group-label" style="margin-top:15px">Sprachkanäle ${canManage?'<button data-action="modal" data-modal="create-channel" data-kind="voice" title="Sprachkanal hinzufügen">+</button>':''}</div>
@@ -210,7 +210,12 @@ function renderToastLab() {
 
 function renderAdminPanel() {
   if (state.adminLoading) return modalShell('Admin-Panel · '+(currentServer()?.name||'Server'), '<div class="admin-loading"><div class="loading-line"><span></span></div><p>Serverdaten werden geladen…</p></div>', true);
-  if (state.adminError || !state.adminData) return modalShell('Admin-Panel', '<div class="system-banner admin-error-banner">'+esc(state.adminError||'Noch keine Serverdaten geladen.')+'</div><button class="primary-btn" data-action="admin-refresh">Erneut versuchen</button>', true);
+  if (state.adminError || !state.adminData) {
+    const recovery = state.localMode
+      ? '<div class="admin-recovery"><h3>Lokaler Admin-Zugang</h3><p>Dein aktuelles Konto hat noch keine Admin-Rechte. Auf einer lokalen Installation kannst du die Serververwaltung für diesen PC wiederherstellen.</p><button class="primary-btn" data-action="claim-local-owner">Lokalen Server als Owner übernehmen</button></div>'
+      : '<p class="modal-copy">Melde dich mit dem Server-Owner-Konto an oder lass dich vom Owner zum Admin ernennen.</p>';
+    return modalShell('Admin-Panel', '<div class="system-banner admin-error-banner">'+esc(state.adminError||'Noch keine Serverdaten geladen.')+'</div>'+recovery+'<button class="secondary-btn" data-action="admin-refresh" style="margin-top:12px">Erneut versuchen</button>', true);
+  }
   const data=state.adminData, server=data.server, owner=server.role==='owner';
   const stat=(label,value,icon)=>'<div class="admin-stat"><span>'+icon+'</span><small>'+label+'</small><strong>'+value+'</strong></div>';
   const roleText=role=>role==='owner'?'Owner':role==='admin'?'Admin':'Mitglied';
@@ -233,6 +238,16 @@ function renderAdminPanel() {
     '<section class="admin-section"><div class="admin-section-heading"><div><h3>Servereinstellungen</h3><p>Einladungs-Code: <code>'+esc(server.inviteCode)+'</code></p></div></div>'+settings+'</section></div>'+
     '<section class="admin-section admin-wide-section"><div class="admin-section-heading"><div><h3>Nachrichten moderieren</h3><p>Die letzten Nachrichten aus diesem Server. Gelöschte Nachrichten sind nicht mehr sichtbar.</p></div><span>'+data.messages.length+'</span></div><div class="admin-message-list">'+messageRows+'</div></section>'+
     '<section class="admin-section admin-wide-section"><div class="admin-section-heading"><div><h3>Audit-Log</h3><p>Protokoll der letzten Admin-Aktionen.</p></div><span>'+data.auditLog.length+'</span></div><div class="admin-audit-list">'+auditRows+'</div></section>',true);
+}
+async function claimLocalOwner() {
+  try {
+    await api('/api/local/claim-owner', {method:'POST', body:{serverId:state.activeServerId}});
+    const data=await api('/api/bootstrap');
+    state.localMode=!!data.localMode; state.me=data.me; state.servers=data.servers||[]; state.channels=data.channels||[]; state.members=data.members||[]; state.threads=data.threads||[];
+    state.adminData=null; state.adminError='';
+    toast('Lokaler Admin-Zugang wiederhergestellt.','success');
+    await loadAdminPanelData(); await refreshMembers();
+  } catch(e) { state.adminError=e.message; state.adminLoading=false; render(); toast(e.message,'error'); }
 }
 async function loadAdminPanelData() {
   if (!state.me || !currentServer()) return;
@@ -349,7 +364,7 @@ async function authenticate(form) {
 async function boot() {
   try {
     const data=await api('/api/bootstrap');
-    state.me=data.me; state.servers=data.servers||[]; state.channels=data.channels||[]; state.members=data.members||[]; state.threads=data.threads||[]; state.voiceParticipants={}; for(const v of (data.voiceSessions||[])){(state.voiceParticipants[v.channelId] ||= []).push({userId:v.userId,displayName:state.members.find(m=>m.userId===v.userId)?.displayName||'Mitglied',channelId:v.channelId});}
+    state.me=data.me; state.localMode=!!data.localMode; state.servers=data.servers||[]; state.channels=data.channels||[]; state.members=data.members||[]; state.threads=data.threads||[]; state.voiceParticipants={}; for(const v of (data.voiceSessions||[])){(state.voiceParticipants[v.channelId] ||= []).push({userId:v.userId,displayName:state.members.find(m=>m.userId===v.userId)?.displayName||'Mitglied',channelId:v.channelId});}
     if(!state.servers.some(s=>s.id===state.activeServerId))state.activeServerId=state.servers[0]?.id||'toast-zone';
     const savedChannel=saved('active-channel','');
     if(savedChannel && state.channels.some(c=>c.id===savedChannel&&c.serverId===state.activeServerId))state.activeChannelId=savedChannel;
@@ -612,6 +627,7 @@ function handleClick(event) {
   if(action==='copy-invite-link'){const code=state.modalData.code||currentServer()?.inviteCode||'TOASTZONE';copyText(`${location.origin}/?invite=${code}`);return;}
   if(action==='toastlab'){state.modal='toastlab';render();return;}
   if(action==='admin-panel'){openAdminPanel();return;}
+  if(action==='claim-local-owner'){claimLocalOwner();return;}
   if(action==='admin-refresh'){loadAdminPanelData();return;}
   if(action==='admin-role'){changeAdminRole(el.dataset.id,el.dataset.role);return;}
   if(action==='admin-kick'){kickAdminMember(el.dataset.id);return;}
