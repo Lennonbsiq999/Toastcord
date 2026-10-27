@@ -535,6 +535,9 @@ test('admin panel renderer returns HTML synchronously for renderModal', () => {
   assert.ok(appSource.includes('state.me.id===userId && requestId===viewLoadSequence'));
   assert.ok(appSource.includes('const userId=state.me.id, serverId=state.activeServerId, requestId=++adminLoadSequence'));
   assert.ok(appSource.includes('++authRequestSequence; ++viewLoadSequence;'));
+  assert.ok(appSource.includes('state.ws!==ws||state.me?.id!==wsUserId'));
+  assert.ok(appSource.includes('if(state.me?.id!==userId)return;'));
+  assert.ok(appSource.includes('++submitSequence;'));
   assert.ok(appSource.includes('state.messages=[];state.threads=[];state.voiceParticipants={}'));
   assert.ok(appSource.includes('data-action="voice-enable-mic"'));
   assert.ok(appSource.includes('if(!canCapture)'));
