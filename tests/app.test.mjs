@@ -266,18 +266,27 @@ test('message reactions persist, toggle off, and reject unsupported emoji', asyn
   assert.equal(invalid.status, 400);
 });
 
-test('direct messages are private and persist for both participants', async () => {
-  const create = await request('/api/dm/threads', {method:'POST',cookie:cookieA,body:{username:'SecondMember'}});
-  assert.equal(create.status,200,JSON.stringify(create.json));
-  const thread=create.json.thread;
-  assert.equal(thread.otherDisplayName,'SecondMember');
-  const sent=await request('/api/dm/messages',{method:'POST',cookie:cookieA,body:{threadId:thread.id,text:'Private Nachricht nur für uns.'}});
-  assert.equal(sent.status,201,JSON.stringify(sent.json));
-  const history=await request(`/api/dm/messages?threadId=${encodeURIComponent(thread.id)}`,{cookie:cookieB});
-  assert.equal(history.status,200);
-  assert.ok(history.json.messages.some(m=>m.text==='Private Nachricht nur für uns.'));
-  const outsider=await request(`/api/dm/messages?threadId=${encodeURIComponent(thread.id)}`,{cookie:(await request('/api/auth/register',{method:'POST',body:{username:'Outsider',password:'ThirdSecure!789'}})).cookie});
-  assert.equal(outsider.status,403);
+test('direct messages are private, delivered live, and persist for both participants', async () => {
+  const wsA=await openWebSocket(cookieA);
+  const wsB=await openWebSocket(cookieB);
+  try {
+    await Promise.all([wsA.waitFor(m=>m.type==='connected'),wsB.waitFor(m=>m.type==='connected')]);
+    const create = await request('/api/dm/threads', {method:'POST',cookie:cookieA,body:{username:'SecondMember'}});
+    assert.equal(create.status,200,JSON.stringify(create.json));
+    const thread=create.json.thread;
+    assert.equal(thread.otherDisplayName,'SecondMember');
+    const threadNotice=await wsB.waitFor(m=>m.type==='threads_update'&&m.threadId===thread.id);
+    assert.equal(threadNotice.threadId,thread.id);
+    const sent=await request('/api/dm/messages',{method:'POST',cookie:cookieA,body:{threadId:thread.id,text:'Private Nachricht nur für uns.'}});
+    assert.equal(sent.status,201,JSON.stringify(sent.json));
+    const live=await wsB.waitFor(m=>m.type==='dm_message_new'&&m.threadId===thread.id&&m.message?.id===sent.json.message.id);
+    assert.equal(live.message.text,'Private Nachricht nur für uns.');
+    const history=await request(`/api/dm/messages?threadId=${encodeURIComponent(thread.id)}`,{cookie:cookieB});
+    assert.equal(history.status,200);
+    assert.ok(history.json.messages.some(m=>m.text==='Private Nachricht nur für uns.'));
+    const outsider=await request(`/api/dm/messages?threadId=${encodeURIComponent(thread.id)}`,{cookie:(await request('/api/auth/register',{method:'POST',body:{username:'Outsider',password:'ThirdSecure!789'}})).cookie});
+    assert.equal(outsider.status,403);
+  } finally { await Promise.all([wsA.close(),wsB.close()]); }
 });
 
 
@@ -482,6 +491,8 @@ test('admin panel renderer returns HTML synchronously for renderModal', () => {
   assert.match(appSource, /Admin-Panel öffnen/);
   assert.match(appSource, /data-action="claim-local-owner"/);
   assert.match(appSource, /state.localMode=!!data.localMode/);
+  assert.ok(appSource.includes("msg.type==='member_update'||msg.type==='threads_update'"));
+  assert.ok(appSource.includes('state.threads=d.threads||[]'));
   assert.ok(appSource.includes('const requestId=++viewLoadSequence;'));
   assert.ok(appSource.includes('state.activeChannelId===channelId'));
   assert.ok(appSource.includes("if(serverJoined)await api('/api/voice/leave'"));
