@@ -496,6 +496,9 @@ test('admin panel renderer returns HTML synchronously for renderModal', () => {
   assert.ok(appSource.includes('const requestId=++viewLoadSequence;'));
   assert.ok(appSource.includes('state.activeChannelId===channelId'));
   assert.ok(appSource.includes("if(serverJoined)await api('/api/voice/leave'"));
+  assert.ok(appSource.includes('messageMutationSequence = 0'));
+  assert.ok(appSource.includes('viewLoadSequence!==viewVersion || messageMutationSequence!==mutationVersion'));
+  assert.ok(appSource.includes('if(retryIfMutated())return refreshView()'));
   assert.ok(appSource.includes('data-action="voice-enable-mic"'));
   assert.ok(appSource.includes('if(!canCapture)'));
   assert.ok(appSource.includes('state.voiceChannelId=channelId;state.muted=!mediaStream;state.voiceNotice=microphoneNotice;'));
