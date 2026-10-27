@@ -16,7 +16,7 @@ const state = {
 };
 let liveSyncTimer = null, liveMessageSyncBusy = false, liveVoiceSyncBusy = false, lastVoiceSyncAt = 0, messageMutationSequence = 0;
 const REACTION_EMOJIS = ['👍','❤️','😂','🔥','🎉','🍞','👀','🤔','💀','🚀'];
-let pendingSubmit = false, viewLoadSequence = 0, memberLoadSequence = 0, bootstrapLoadSequence = 0, voiceJoinSequence = 0;
+let pendingSubmit = false, viewLoadSequence = 0, memberLoadSequence = 0, bootstrapLoadSequence = 0, voiceJoinSequence = 0, authRequestSequence = 0, adminLoadSequence = 0;
 function markMessagesChanged() { messageMutationSequence += 1; }
 
 function esc(value) {
@@ -241,21 +241,38 @@ function renderAdminPanel() {
     '<section class="admin-section admin-wide-section"><div class="admin-section-heading"><div><h3>Audit-Log</h3><p>Protokoll der letzten Admin-Aktionen.</p></div><span>'+data.auditLog.length+'</span></div><div class="admin-audit-list">'+auditRows+'</div></section>',true);
 }
 async function claimLocalOwner() {
+  const userId=state.me?.id, serverId=state.activeServerId;
   try {
-    await api('/api/local/claim-owner', {method:'POST', body:{serverId:state.activeServerId}});
+    await api('/api/local/claim-owner', {method:'POST', body:{serverId}});
+    if(state.me?.id!==userId||state.activeServerId!==serverId)return;
     const data=await api('/api/bootstrap');
+    if(state.me?.id!==userId||state.activeServerId!==serverId)return;
     state.localMode=!!data.localMode; state.me=data.me; state.servers=data.servers||[]; state.channels=data.channels||[]; state.members=data.members||[]; state.threads=data.threads||[];
     state.adminData=null; state.adminError='';
     toast('Lokaler Admin-Zugang wiederhergestellt.','success');
     await loadAdminPanelData(); await refreshMembers();
-  } catch(e) { state.adminError=e.message; state.adminLoading=false; render(); toast(e.message,'error'); }
+  } catch(e) {
+    if(state.me?.id!==userId||state.activeServerId!==serverId)return;
+    state.adminError=e.message; state.adminLoading=false; render(); toast(e.message,'error');
+  }
 }
 async function loadAdminPanelData() {
   if (!state.me || !currentServer()) return;
+  const userId=state.me.id, serverId=state.activeServerId, requestId=++adminLoadSequence;
   state.adminLoading=true; state.adminError=''; render();
-  try { state.adminData=await api('/api/admin/overview?serverId='+encodeURIComponent(state.activeServerId)); }
-  catch(e) { state.adminData=null; state.adminError=e.message; }
-  finally { state.adminLoading=false; render(); }
+  try {
+    const data=await api('/api/admin/overview?serverId='+encodeURIComponent(serverId));
+    if(requestId!==adminLoadSequence||state.me?.id!==userId||state.activeServerId!==serverId)return;
+    state.adminData=data;
+  } catch(e) {
+    if(requestId!==adminLoadSequence||state.me?.id!==userId||state.activeServerId!==serverId)return;
+    state.adminData=null; state.adminError=e.message;
+  } finally {
+    if(requestId===adminLoadSequence) {
+      state.adminLoading=false;
+      if(state.me?.id===userId&&state.activeServerId===serverId)render();
+    }
+  }
 }
 async function openAdminPanel() {
   state.modal='admin-panel'; state.adminData=null; state.adminError=''; await loadAdminPanelData();
@@ -295,6 +312,7 @@ function sameMessages(a,b) {
 }
 async function syncLiveMessages() {
   if(!state.me||liveMessageSyncBusy)return;
+  const userId=state.me.id;
   const mode=state.mode;
   const thread=mode==='dm'?state.threads.find(t=>t.id===state.activeThreadId):null;
   const channel=mode==='channel'?currentChannel():null;
@@ -309,7 +327,7 @@ async function syncLiveMessages() {
       ? await api('/api/dm/messages?threadId='+encodeURIComponent(id))
       : await api('/api/messages?channelId='+encodeURIComponent(id));
     // Never let an old REST snapshot erase a message received over WebSocket or a local edit.
-    if(state.mode!==mode ||
+    if(!state.me || state.me.id!==userId || state.mode!==mode ||
       (mode==='dm'?state.activeThreadId!==id:state.activeChannelId!==id) ||
       viewLoadSequence!==viewVersion || messageMutationSequence!==mutationVersion) return;
     const next=d.messages||[];
@@ -323,6 +341,7 @@ async function syncLiveMessages() {
 }
 async function syncLiveVoicePresence() {
   if(!state.me||liveVoiceSyncBusy||Date.now()-lastVoiceSyncAt<2200)return;
+  const userId=state.me.id;
   const serverId=currentServer()?.id;
   if(!serverId)return;
   const voiceChannels=state.channels.filter(c=>c.serverId===serverId&&c.kind==='voice');
@@ -335,7 +354,7 @@ async function syncLiveVoicePresence() {
       catch(e) { console.debug('Voice presence sync failed for '+channel.id,e); return null; }
     }));
     // Ignore results if the user changed servers while the requests were in flight.
-    if(state.activeServerId!==serverId)return;
+    if(!state.me || state.me.id!==userId || state.activeServerId!==serverId)return;
     for(const result of results.filter(Boolean)) {
       const previous=state.voiceParticipants[result.channelId]||[];
       const next=result.participants;
@@ -359,32 +378,38 @@ function refreshLiveState() {
 }
 
 async function authenticate(form) {
+  const requestId=++authRequestSequence;
   const values=Object.fromEntries(new FormData(form).entries());
   const err=$('#auth-error'); err.hidden=true; err.textContent='';
   try {
     if(state.authMode==='register' && values.password!==values.password2) throw new Error('Die beiden Passwörter stimmen nicht überein.');
     const data=await api(state.authMode==='register'?'/api/auth/register':'/api/auth/login',{method:'POST',body:{username:values.username,password:values.password,displayName:values.displayName}});
+    if(requestId!==authRequestSequence)return;
     state.me=data.user; await boot();
-  } catch(e) { err.textContent=e.message; err.hidden=false; }
+  } catch(e) { if(requestId!==authRequestSequence)return; err.textContent=e.message; err.hidden=false; }
 }
 async function boot() {
+  const userId=state.me?.id;
   try {
     const data=await api('/api/bootstrap');
+    if(!state.me||state.me.id!==userId)return;
     state.me=data.me; state.localMode=!!data.localMode; state.servers=data.servers||[]; state.channels=data.channels||[]; state.members=data.members||[]; state.threads=data.threads||[]; state.voiceParticipants={}; for(const v of (data.voiceSessions||[])){(state.voiceParticipants[v.channelId] ||= []).push({userId:v.userId,displayName:state.members.find(m=>m.userId===v.userId)?.displayName||'Mitglied',channelId:v.channelId});}
     if(!state.servers.some(s=>s.id===state.activeServerId))state.activeServerId=state.servers[0]?.id||'toast-zone';
     const savedChannel=saved('active-channel','');
     if(savedChannel && state.channels.some(c=>c.id===savedChannel&&c.serverId===state.activeServerId))state.activeChannelId=savedChannel;
     else state.activeChannelId=state.channels.find(c=>c.serverId===state.activeServerId&&c.kind==='text')?.id||state.channels.find(c=>c.serverId===state.activeServerId)?.id||'';
     loadLocalPrefs();
-    try { const conf=await api('/api/voice/config'); state.iceServers=conf.iceServers||state.iceServers; state.turnConfigured=!!conf.turnConfigured; } catch {}
+    try { const conf=await api('/api/voice/config'); if(!state.me||state.me.id!==userId)return; state.iceServers=conf.iceServers||state.iceServers; state.turnConfigured=!!conf.turnConfigured; } catch {}
+    if(!state.me||state.me.id!==userId)return;
     render(); await refreshView(); connectWs(); startLiveSync();
-  } catch(e) { state.me=null; renderAuth(); toast(e.message,'error'); }
+  } catch(e) { if(state.me?.id!==userId)return; state.me=null; renderAuth(); toast(e.message,'error'); }
 }
 async function refreshView() {
   const requestId=++viewLoadSequence;
+  const userId=state.me?.id;
   const mode=state.mode, serverId=state.activeServerId, channelId=state.activeChannelId, threadId=state.activeThreadId;
   const mutationVersion=messageMutationSequence;
-  const stillCurrent=()=>requestId===viewLoadSequence && state.mode===mode &&
+  const stillCurrent=()=>!!userId && !!state.me && state.me.id===userId && requestId===viewLoadSequence && state.mode===mode &&
     (mode==='dm' ? state.activeThreadId===threadId : state.activeServerId===serverId && state.activeChannelId===channelId);
   const retryIfMutated=()=>messageMutationSequence!==mutationVersion;
   const applyMessages=messages=>{state.messages=messages;markMessagesChanged();};
@@ -434,11 +459,11 @@ async function refreshView() {
   render();
 }
 async function refreshMembers() {
-  const server=currentServer(); if(!server)return;
-  const serverId=server.id, requestId=++memberLoadSequence;
+  const server=currentServer(); if(!server||!state.me)return;
+  const userId=state.me.id, serverId=server.id, requestId=++memberLoadSequence;
   try {
     const data=await api(`/api/members?serverId=${encodeURIComponent(serverId)}`);
-    if(requestId!==memberLoadSequence || currentServer()?.id!==serverId)return;
+    if(requestId!==memberLoadSequence || state.me?.id!==userId || currentServer()?.id!==serverId)return;
     state.members=(data.members||[]).map(m=>({...m,serverId}));
   } catch(e) { console.warn('Member refresh failed',e); }
 }
@@ -502,9 +527,10 @@ function handleWs(msg) {
 }
 async function loadBootstrapSoft() {
   const requestId=++bootstrapLoadSequence;
+  const userId=state.me?.id;
   try {
     const d=await api('/api/bootstrap');
-    if(requestId!==bootstrapLoadSequence||!state.me)return;
+    if(requestId!==bootstrapLoadSequence||!state.me||state.me.id!==userId)return;
     const previousServerId=state.activeServerId;
     state.localMode=!!d.localMode;
     state.servers=d.servers||[];
@@ -597,9 +623,20 @@ function modalError(message){const el=$('#modal-error');if(el){el.textContent=me
 async function inviteServer() {try{const d=await api('/api/invites',{method:'POST',body:{serverId:state.activeServerId}});state.modalData={code:d.code,url:d.url};state.modal='invite';render();}catch(e){toast(e.message,'error');}}
 async function copyText(text) {try{await navigator.clipboard.writeText(text);toast('Kopiert.','success');}catch{const box=document.createElement('textarea');box.value=text;document.body.append(box);box.select();document.execCommand('copy');box.remove();toast('Kopiert.','success');}}
 async function logout() {
-  state.wsIntentionalClose=true;leaveVoice(false);try{state.ws?.close();}catch{};state.ws=null;state.wsReady=false;
-  try{await api('/api/auth/logout',{method:'POST',body:{}});}catch{}
-  state.me=null;state.servers=[];state.channels=[];state.members=[];state.messages=[];state.modal='';state.wsIntentionalClose=false;state.draft='';renderAuth();
+  ++authRequestSequence; ++viewLoadSequence; ++memberLoadSequence; ++bootstrapLoadSequence; ++adminLoadSequence; ++voiceJoinSequence;
+  markMessagesChanged();
+  state.wsIntentionalClose=true;
+  leaveVoice(false);
+  try{state.ws?.close();}catch{}
+  state.ws=null;state.wsReady=false;
+  const logoutRequest=api('/api/auth/logout',{method:'POST',body:{}}).catch(()=>{});
+  state.me=null;state.servers=[];state.channels=[];state.members=[];state.messages=[];state.threads=[];state.voiceParticipants={};
+  state.adminData=null;state.adminLoading=false;state.adminError='';state.localMode=false;
+  state.activeServerId='toast-zone';state.activeChannelId='ch-general';state.activeThreadId='';state.mode='channel';
+  state.modal='';state.modalData={};state.draft='';state.messageSearch='';state.messageSearch='';pendingSubmit=false;
+  state.wsIntentionalClose=false;
+  renderAuth();
+  await logoutRequest;
 }
 async function saveProfile(form) {
   const body=Object.fromEntries(new FormData(form).entries());try{const d=await api('/api/profile',{method:'PATCH',body});state.me=d.user;state.modal='';render();toast('Profil aktualisiert.','success');sendWs({type:'presence',status:state.me.status});}catch(e){modalError(e.message);}
