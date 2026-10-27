@@ -260,7 +260,10 @@ function handleWsText(client, text) {
     for (const old of oldSessions) client.joinedVoice?.delete(old.channelId);
     client.joinedVoice = new Set([...(client.joinedVoice || []), channelId]);
     store.flush();
-    for (const old of oldSessions) sendVoiceState(store,old.serverId,old.channelId);
+    for (const old of oldSessions) {
+      sendVoiceState(store,old.serverId,old.channelId);
+      if (old.serverId !== channel.serverId) broadcast({type:'member_update',serverId:old.serverId},c=>store.isMember(old.serverId,c.userId));
+    }
     sendVoiceState(store, channel.serverId, channelId);
     broadcast({type:'member_update',serverId:channel.serverId},c=>store.isMember(channel.serverId,c.userId));
     return;
@@ -581,7 +584,10 @@ export function createAppServer(options = {}) {
             liveClient.joinedVoice ||= new Set();
             liveClient.joinedVoice.add(channelId);
           }
-          for (const old of oldSessions) if (old.channelId !== channelId) sendVoiceState(store,old.serverId,old.channelId);
+          for (const old of oldSessions) if (old.channelId !== channelId) {
+             sendVoiceState(store,old.serverId,old.channelId);
+             if (old.serverId !== channel.serverId) broadcast({type:'member_update',serverId:old.serverId},c=>store.isMember(old.serverId,c.userId));
+           }
           sendVoiceState(store,channel.serverId,channelId);
           broadcast({type:'member_update',serverId:channel.serverId},c=>store.isMember(channel.serverId,c.userId));
           sendJson(res,200,{ok:true,channelId,participants:store.state.voiceSessions.filter(v=>v.channelId===channelId).map(v=>({userId:v.userId,displayName:store.userById(v.userId)?.displayName||'Mitglied',channelId:v.channelId}))}); return;
