@@ -650,7 +650,9 @@ export function createAppServer(options = {}) {
           const participants = [user.id,recipient.id].sort();
           let thread = store.state.threads.find(t => t.participants.length === 2 && t.participants[0] === participants[0] && t.participants[1] === participants[1]);
           if (!thread) { thread = {id:newId('dm_'),participants,createdAt:Date.now()}; store.update(state => state.threads.push(thread)); }
-          sendJson(res, 200, {thread:{...thread,otherUserId:recipient.id,otherDisplayName:recipient.displayName}}); return;
+          sendJson(res, 200, {thread:{...thread,otherUserId:recipient.id,otherDisplayName:recipient.displayName}});
+           broadcast({type:'threads_update',threadId:thread.id},c=>thread.participants.includes(c.userId));
+           return;
         }
         if (pathname === '/api/dm/messages' && req.method === 'GET') {
           const threadId = url.searchParams.get('threadId') || '';
