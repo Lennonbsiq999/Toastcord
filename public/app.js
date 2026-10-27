@@ -16,7 +16,7 @@ const state = {
 };
 let liveSyncTimer = null, liveMessageSyncBusy = false, liveVoiceSyncBusy = false, lastVoiceSyncAt = 0, messageMutationSequence = 0;
 const REACTION_EMOJIS = ['👍','❤️','😂','🔥','🎉','🍞','👀','🤔','💀','🚀'];
-let pendingSubmit = false, viewLoadSequence = 0, memberLoadSequence = 0, bootstrapLoadSequence = 0, voiceJoinSequence = 0, authRequestSequence = 0, adminLoadSequence = 0;
+let pendingSubmit = false, viewLoadSequence = 0, memberLoadSequence = 0, bootstrapLoadSequence = 0, voiceJoinSequence = 0, authRequestSequence = 0, adminLoadSequence = 0, submitSequence = 0;
 function markMessagesChanged() { messageMutationSequence += 1; }
 
 function esc(value) {
@@ -471,13 +471,15 @@ function connectWs() {
   if(!state.me || state.wsIntentionalClose) return;
   try {
     const proto=location.protocol==='https:'?'wss:':'ws:';
+    const wsUserId=state.me.id;
     const ws=new WebSocket(`${proto}//${location.host}/ws`); state.ws=ws;
     ws.addEventListener('open',()=>{
+      if(state.ws!==ws||state.me?.id!==wsUserId){ws.close();return;}
       state.wsReady=true;state.wsReconnect=800;
       if(state.voiceChannelId) sendWs({type:'join_voice',channelId:state.voiceChannelId});
       if(!state.modal){refreshView().catch(()=>{});render();}
     });
-    ws.addEventListener('message',event=>{let msg;try{msg=JSON.parse(event.data);}catch{return;}handleWs(msg);});
+    ws.addEventListener('message',event=>{if(state.ws!==ws||state.me?.id!==wsUserId)return;let msg;try{msg=JSON.parse(event.data);}catch{return;}handleWs(msg);});
     ws.addEventListener('close',()=>{state.wsReady=false;if(state.ws===ws)state.ws=null;if(!state.modal)render();if(state.me&&!state.wsIntentionalClose){const delay=state.wsReconnect;state.wsReconnect=Math.min(12000,state.wsReconnect*1.6);setTimeout(connectWs,delay);}});
     ws.addEventListener('error',()=>{state.wsReady=false;});
   } catch(e) { console.warn('WebSocket unavailable',e); }
@@ -571,6 +573,7 @@ async function switchChannel(id) {
 }
 async function sendMessage(raw) {
   let text=String(raw||'').trim();if(!text||pendingSubmit)return;
+  const submitId=++submitSequence, userId=state.me?.id;
   if(state.mode==='dm') {
     const thread=state.threads.find(t=>t.id===state.activeThreadId);
     if(!thread){toast('Wähle zuerst eine Direktnachricht aus.','error');return;}
@@ -578,14 +581,14 @@ async function sendMessage(raw) {
     pendingSubmit=true;
     try {
       const d=await api('/api/dm/messages',{method:'POST',body:{threadId,text}});
-      if(state.mode==='dm'&&state.activeThreadId===threadId) {
+      if(state.me?.id===userId&&state.mode==='dm'&&state.activeThreadId===threadId) {
         if(!state.messages.some(m=>m.id===d.message.id)){state.messages.push(d.message);markMessagesChanged();}
         state.draft='';
         const input=$('#composer-input');if(input)input.value='';
         render();
       }
-    } catch(e) {toast(e.message,'error');}
-    finally {pendingSubmit=false;}
+    } catch(e) {if(state.me?.id===userId)toast(e.message,'error');}
+    finally {if(submitId===submitSequence)pendingSubmit=false;}
     return;
   }
   const channel=currentChannel();if(!channel||channel.kind!=='text')return;
@@ -598,32 +601,53 @@ async function sendMessage(raw) {
   pendingSubmit=true;
   try {
     const d=await api('/api/messages',{method:'POST',body:{channelId,text}});
-    if(state.mode==='channel'&&state.activeServerId===serverId&&state.activeChannelId===channelId) {
+    if(state.me?.id===userId&&state.mode==='channel'&&state.activeServerId===serverId&&state.activeChannelId===channelId) {
       if(!state.messages.some(m=>m.id===d.message.id)){state.messages.push(d.message);markMessagesChanged();}
       state.draft='';
       const input=$('#composer-input');if(input)input.value='';
       render();
     }
-  } catch(e) {toast(e.message,'error');}
-  finally {pendingSubmit=false;}
+  } catch(e) {if(state.me?.id===userId)toast(e.message,'error');}
+  finally {if(submitId===submitSequence)pendingSubmit=false;}
 }
 async function createServer(form) {
-  const body=Object.fromEntries(new FormData(form).entries());try{const d=await api('/api/servers',{method:'POST',body});state.servers.push(d.server);state.channels.push(...d.channels);state.activeServerId=d.server.id;state.activeChannelId=d.channels.find(c=>c.kind==='text')?.id||d.channels[0]?.id;state.modal='';await refreshView();toast('Server erstellt. Die digitale Hausordnung bleibt dir erspart.','success');}catch(e){modalError(e.message);}
+  const userId=state.me?.id, body=Object.fromEntries(new FormData(form).entries());
+  try {
+    const d=await api('/api/servers',{method:'POST',body});
+    if(state.me?.id!==userId)return;
+    state.servers.push(d.server);state.channels.push(...d.channels);state.activeServerId=d.server.id;state.activeChannelId=d.channels.find(c=>c.kind==='text')?.id||d.channels[0]?.id;state.modal='';await refreshView();toast('Server erstellt. Die digitale Hausordnung bleibt dir erspart.','success');
+  } catch(e) {if(state.me?.id===userId)modalError(e.message);}
 }
 async function joinServer(form) {
-  const body=Object.fromEntries(new FormData(form).entries());try{const d=await api('/api/servers/join',{method:'POST',body});if(!state.servers.some(s=>s.id===d.server.id))state.servers.push(d.server);state.channels=state.channels.filter(c=>c.serverId!==d.server.id).concat(d.channels);state.activeServerId=d.server.id;state.activeChannelId=d.channels.find(c=>c.kind==='text')?.id||d.channels[0]?.id;state.modal='';await refreshView();toast(`Du bist ${d.server.name} beigetreten.`,'success');}catch(e){modalError(e.message);}
+  const userId=state.me?.id, body=Object.fromEntries(new FormData(form).entries());
+  try {
+    const d=await api('/api/servers/join',{method:'POST',body});
+    if(state.me?.id!==userId)return;
+    if(!state.servers.some(s=>s.id===d.server.id))state.servers.push(d.server);state.channels=state.channels.filter(c=>c.serverId!==d.server.id).concat(d.channels);state.activeServerId=d.server.id;state.activeChannelId=d.channels.find(c=>c.kind==='text')?.id||d.channels[0]?.id;state.modal='';await refreshView();toast(`Du bist ${d.server.name} beigetreten.`,'success');
+  } catch(e) {if(state.me?.id===userId)modalError(e.message);}
 }
 async function createChannel(form) {
-  const body=Object.fromEntries(new FormData(form).entries());try{const d=await api(`/api/servers/${encodeURIComponent(state.activeServerId)}/channels`,{method:'POST',body});state.channels.push(d.channel);state.modal='';await switchChannel(d.channel.id);toast('Kanal erstellt.','success');}catch(e){modalError(e.message);}
+  const userId=state.me?.id, serverId=state.activeServerId, body=Object.fromEntries(new FormData(form).entries());
+  try {
+    const d=await api(`/api/servers/${encodeURIComponent(serverId)}/channels`,{method:'POST',body});
+    if(state.me?.id!==userId)return;
+    if(state.activeServerId!==serverId){await loadBootstrapSoft();return;}
+    state.channels.push(d.channel);state.modal='';await switchChannel(d.channel.id);toast('Kanal erstellt.','success');
+  } catch(e) {if(state.me?.id===userId)modalError(e.message);}
 }
 async function createDm(form) {
-  const body=Object.fromEntries(new FormData(form).entries());try{const d=await api('/api/dm/threads',{method:'POST',body});const thread=d.thread;const idx=state.threads.findIndex(t=>t.id===thread.id);if(idx>=0)state.threads[idx]=thread;else state.threads.unshift(thread);state.activeThreadId=thread.id;state.mode='dm';state.modal='';state.messageSearch='';await refreshView();toast(`Direktnachricht mit ${thread.otherDisplayName} geöffnet.`,'success');}catch(e){modalError(e.message);}
+  const userId=state.me?.id, body=Object.fromEntries(new FormData(form).entries());
+  try {
+    const d=await api('/api/dm/threads',{method:'POST',body});
+    if(state.me?.id!==userId)return;
+    const thread=d.thread;const idx=state.threads.findIndex(t=>t.id===thread.id);if(idx>=0)state.threads[idx]=thread;else state.threads.unshift(thread);state.activeThreadId=thread.id;state.mode='dm';state.messages=[];markMessagesChanged();state.modal='';state.messageSearch='';await refreshView();toast(`Direktnachricht mit ${thread.otherDisplayName} geöffnet.`,'success');
+  } catch(e) {if(state.me?.id===userId)modalError(e.message);}
 }
 function modalError(message){const el=$('#modal-error');if(el){el.textContent=message;el.hidden=false;}else toast(message,'error');}
-async function inviteServer() {try{const d=await api('/api/invites',{method:'POST',body:{serverId:state.activeServerId}});state.modalData={code:d.code,url:d.url};state.modal='invite';render();}catch(e){toast(e.message,'error');}}
+async function inviteServer() {const userId=state.me?.id,serverId=state.activeServerId;try{const d=await api('/api/invites',{method:'POST',body:{serverId}});if(state.me?.id!==userId||state.activeServerId!==serverId)return;state.modalData={code:d.code,url:d.url};state.modal='invite';render();}catch(e){if(state.me?.id===userId)toast(e.message,'error');}}
 async function copyText(text) {try{await navigator.clipboard.writeText(text);toast('Kopiert.','success');}catch{const box=document.createElement('textarea');box.value=text;document.body.append(box);box.select();document.execCommand('copy');box.remove();toast('Kopiert.','success');}}
 async function logout() {
-  ++authRequestSequence; ++viewLoadSequence; ++memberLoadSequence; ++bootstrapLoadSequence; ++adminLoadSequence; ++voiceJoinSequence;
+  ++authRequestSequence; ++viewLoadSequence; ++memberLoadSequence; ++bootstrapLoadSequence; ++adminLoadSequence; ++voiceJoinSequence; ++submitSequence;
   markMessagesChanged();
   state.wsIntentionalClose=true;
   leaveVoice(false);
@@ -639,26 +663,42 @@ async function logout() {
   await logoutRequest;
 }
 async function saveProfile(form) {
-  const body=Object.fromEntries(new FormData(form).entries());try{const d=await api('/api/profile',{method:'PATCH',body});state.me=d.user;state.modal='';render();toast('Profil aktualisiert.','success');sendWs({type:'presence',status:state.me.status});}catch(e){modalError(e.message);}
+  const userId=state.me?.id, body=Object.fromEntries(new FormData(form).entries());
+  try {
+    const d=await api('/api/profile',{method:'PATCH',body});
+    if(state.me?.id!==userId)return;
+    state.me=d.user;state.modal='';render();toast('Profil aktualisiert.','success');sendWs({type:'presence',status:state.me.status});
+  } catch(e) {if(state.me?.id===userId)modalError(e.message);}
 }
 async function editMessage() {
-  const msg=state.modalData.message; const text=$('#edit-text')?.value?.trim();if(!msg||!text)return;
-  try{const d=await api(`/api/messages/${encodeURIComponent(msg.id)}`,{method:'PATCH',body:{text}});const i=state.messages.findIndex(m=>m.id===msg.id);if(i>=0){state.messages[i]=d.message;markMessagesChanged();}state.modal='';render();toast('Nachricht bearbeitet.','success');}catch(e){modalError(e.message);}
+  const userId=state.me?.id, msg=state.modalData.message; const text=$('#edit-text')?.value?.trim();if(!msg||!text)return;
+  try {
+    const d=await api(`/api/messages/${encodeURIComponent(msg.id)}`,{method:'PATCH',body:{text}});
+    if(state.me?.id!==userId)return;
+    const i=state.messages.findIndex(m=>m.id===msg.id);if(i>=0){state.messages[i]=d.message;markMessagesChanged();}state.modal='';render();toast('Nachricht bearbeitet.','success');
+  } catch(e) {if(state.me?.id===userId)modalError(e.message);}
 }
 async function deleteMessage(id) {
   if(!confirm('Diese Nachricht wirklich löschen?'))return;
-  try{await api(`/api/messages/${encodeURIComponent(id)}`,{method:'DELETE'});const next=state.messages.filter(m=>m.id!==id);if(next.length!==state.messages.length){state.messages=next;markMessagesChanged();}render();}catch(e){toast(e.message,'error');}
+  const userId=state.me?.id;
+  try {
+    await api(`/api/messages/${encodeURIComponent(id)}`,{method:'DELETE'});
+    if(state.me?.id!==userId)return;
+    const next=state.messages.filter(m=>m.id!==id);if(next.length!==state.messages.length){state.messages=next;markMessagesChanged();}render();
+  } catch(e) {if(state.me?.id===userId)toast(e.message,'error');}
 }
 function toggleBookmark(id) {
   if(state.bookmarks.has(id))state.bookmarks.delete(id);else state.bookmarks.add(id);persistBookmarks();render();
 }
 async function toggleReaction(id, emoji) {
   if(!REACTION_EMOJIS.includes(emoji))return;
+  const userId=state.me?.id;
   try {
     const d=await api(`/api/messages/${encodeURIComponent(id)}/reactions`,{method:'POST',body:{emoji}});
+    if(state.me?.id!==userId)return;
     const i=state.messages.findIndex(m=>m.id===id);if(i>=0){state.messages[i]=d.message;markMessagesChanged();}
     state.reactionTargetMessageId='';render();
-  } catch(e) {toast(e.message,'error');}
+  } catch(e) {if(state.me?.id===userId)toast(e.message,'error');}
 }
 function exportChat() {
   const channel=currentChannel();const content=[`Toastcord · ${currentServer()?.name||''} / ${channel?.name||''}`,`Export am ${new Date().toLocaleString('de-DE')}`,'',...state.messages.map(m=>`[${new Date(m.createdAt).toLocaleString('de-DE')}] ${m.author?.displayName||'Mitglied'}: ${m.text}`)].join('\n');
