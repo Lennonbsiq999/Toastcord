@@ -131,6 +131,24 @@ test('health endpoint and authentication', async () => {
   assert.equal(check.json.user.id, userA.id);
 });
 
+test('re-login revokes old WebSocket sessions', async () => {
+  const reg=await request('/api/auth/register',{method:'POST',body:{username:'SessionRotation',password:'SessionRotation!123'}});
+  assert.equal(reg.status,201,JSON.stringify(reg.json));
+  const oldCookie=reg.cookie;
+  const ws=await openWebSocket(oldCookie);
+  try {
+    await ws.waitFor(m=>m.type==='connected');
+    const closed=new Promise(resolve=>ws.socket.once('close',resolve));
+    const login=await request('/api/auth/login',{method:'POST',body:{username:'SessionRotation',password:'SessionRotation!123'}});
+    assert.equal(login.status,200,JSON.stringify(login.json));
+    await Promise.race([closed,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Old WebSocket session was not revoked after re-login.')),1000))]);
+    const oldSession=await request('/api/bootstrap',{cookie:oldCookie});
+    assert.equal(oldSession.status,401);
+    const newSession=await request('/api/bootstrap',{cookie:login.cookie});
+    assert.equal(newSession.status,200);
+  } finally { await ws.close(); }
+});
+
 test('concurrent registrations cannot create duplicate usernames', async () => {
   const register=()=>request('/api/auth/register',{method:'POST',body:{username:'ConcurrentRace',password:'ConcurrentRace!123'}});
   const results=await Promise.all([register(),register()]);
