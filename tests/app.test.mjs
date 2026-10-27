@@ -538,6 +538,10 @@ test('admin panel renderer returns HTML synchronously for renderModal', () => {
   assert.ok(appSource.includes('state.ws!==ws||state.me?.id!==wsUserId'));
   assert.ok(appSource.includes('if(state.me?.id!==userId)return;'));
   assert.ok(appSource.includes('++submitSequence;'));
+  assert.ok(appSource.includes('const isCurrent=()=>state.me?.id===accountId&&state.voiceChannelId===channelId&&voiceJoinSequence===joinToken&&state.peerConnections.get(key)===entry'));
+  assert.ok(appSource.includes('if(state.me?.id!==userId||state.voiceChannelId!==channelId||voiceJoinSequence!==joinToken)'));
+  assert.ok(appSource.includes('state.screenStream=stream;'));
+  assert.ok(appSource.includes('if(!isCurrent())return;'));
   assert.ok(appSource.includes('state.messages=[];state.threads=[];state.voiceParticipants={}'));
   assert.ok(appSource.includes('data-action="voice-enable-mic"'));
   assert.ok(appSource.includes('if(!canCapture)'));
