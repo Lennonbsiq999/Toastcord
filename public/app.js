@@ -212,8 +212,8 @@ function renderToastLab() {
 function renderAdminPanel() {
   if (state.adminLoading) return modalShell('Admin-Panel · '+(currentServer()?.name||'Server'), '<div class="admin-loading"><div class="loading-line"><span></span></div><p>Serverdaten werden geladen…</p></div>', true);
   if (state.adminError || !state.adminData) {
-    const recovery = state.localMode
-      ? '<div class="admin-recovery"><h3>Lokaler Admin-Zugang</h3><p>Dein aktuelles Konto hat noch keine Admin-Rechte. Auf einer lokalen Installation kannst du die Serververwaltung für diesen PC wiederherstellen.</p><button class="primary-btn" data-action="claim-local-owner">Lokalen Server als Owner übernehmen</button></div>'
+    const recovery = state.localMode && currentServer()?.id==='toast-zone'
+      ? '<div class="admin-recovery"><h3>Lokaler Admin-Zugang</h3><p>Dein aktuelles Konto hat noch keine Admin-Rechte. Auf einer lokalen Installation kannst du die Verwaltung von Toast Zone für diesen PC wiederherstellen.</p><button class="primary-btn" data-action="claim-local-owner">Lokalen Server als Owner übernehmen</button></div>'
       : '<p class="modal-copy">Melde dich mit dem Server-Owner-Konto an oder lass dich vom Owner zum Admin ernennen.</p>';
     return modalShell('Admin-Panel', '<div class="system-banner admin-error-banner">'+esc(state.adminError||'Noch keine Serverdaten geladen.')+'</div>'+recovery+'<button class="secondary-btn" data-action="admin-refresh" style="margin-top:12px">Erneut versuchen</button>', true);
   }
