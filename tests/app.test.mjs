@@ -131,6 +131,15 @@ test('health endpoint and authentication', async () => {
   assert.equal(check.json.user.id, userA.id);
 });
 
+test('concurrent registrations cannot create duplicate usernames', async () => {
+  const register=()=>request('/api/auth/register',{method:'POST',body:{username:'ConcurrentRace',password:'ConcurrentRace!123'}});
+  const results=await Promise.all([register(),register()]);
+  assert.deepEqual(results.map(r=>r.status).sort((a,b)=>a-b),[201,409]);
+  const boot=await request('/api/bootstrap',{cookie:results.find(r=>r.status===201).cookie});
+  assert.equal(boot.status,200);
+  assert.equal(boot.json.me.username,'ConcurrentRace');
+});
+
 test('default server, persistent message history and edits', async () => {
   const boot = await request('/api/bootstrap', { cookie:cookieA });
   assert.equal(boot.status, 200);
@@ -393,7 +402,9 @@ test('local startup repairs an orphaned default-server owner and restores the ow
   try {
     const state = createDefaultState();
     const firstUser = { id:'recovery-first-user', username:'RecoveryFirst', displayName:'Recovery First', passwordHash:'unused-test-hash', status:'online', avatarColor:'#f4a261', createdAt:Date.now() };
-    state.users.push(firstUser);
+    const orphanedOwner = { id:'recovery-orphaned-owner', username:'OrphanedOwner', displayName:'Orphaned Owner', passwordHash:'unused-test-hash', status:'online', avatarColor:'#8b7cf6', createdAt:Date.now() };
+    state.users.push(firstUser, orphanedOwner);
+    state.memberships.push({id:'mem_orphaned_owner',serverId:'toast-zone',userId:orphanedOwner.id,role:'owner',joinedAt:Date.now()});
     state.servers.find(server => server.id === 'toast-zone').ownerId = 'deleted-user-id';
     fs.writeFileSync(path.join(localDir, 'toastcord.json'), JSON.stringify(state));
     const localApp = createAppServer({ dataDir:localDir, secureCookie:false, localMode:true });
@@ -401,6 +412,8 @@ test('local startup repairs an orphaned default-server owner and restores the ow
     assert.equal(homeServer.ownerId, firstUser.id);
     assert.equal(localApp.store.role('toast-zone', firstUser.id), 'owner');
     assert.ok(localApp.store.state.memberships.some(m => m.serverId === 'toast-zone' && m.userId === firstUser.id && m.role === 'owner'));
+    assert.equal(localApp.store.role('toast-zone', orphanedOwner.id), 'member');
+    assert.equal(localApp.store.state.memberships.filter(m => m.serverId === 'toast-zone' && m.role === 'owner').length, 1);
   } finally {
     fs.rmSync(localDir, { recursive:true, force:true });
   }
