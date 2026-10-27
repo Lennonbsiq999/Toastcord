@@ -10,7 +10,7 @@ const state = {
   voiceParticipants: {}, voiceChannelId: '', localStream: null, screenStream: null,
   peerConnections: new Map(), remoteStreams: new Map(), pendingIce: new Map(),
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }], turnConfigured: false,
-  muted: false, focusMode: false, bookmarks: new Set(), notes: '', theme: 'toast',
+  muted: false, voiceNotice: '', focusMode: false, bookmarks: new Set(), notes: '', theme: 'toast',
   onlineIds: new Set(), messageSearch: '', reactionTargetMessageId: '',
   adminData: null, adminLoading: false, adminError: '', localMode: false,
 };
@@ -147,9 +147,9 @@ function renderVoiceRoom(channel) {
   const tiles=participants.map(p=>{
     const user=p.userId===state.me?.id?state.me:{displayName:p.displayName,avatarColor:'#8b82f6'};
     const videoId=`remote-video-${p.userId}`;
-    return `<div class="voice-tile" id="media-tile-${esc(p.userId)}">${avatar(user)}<strong>${esc(p.displayName||user.displayName)}${p.userId===state.me?.id?' (du)':''}</strong><small>${p.userId===state.me?.id?(state.muted?'Mikro stumm':'Verbunden'):'Sprachverbindung'}</small></div>`;
+    return `<div class="voice-tile" id="media-tile-${esc(p.userId)}">${avatar(user)}<strong>${esc(p.displayName||user.displayName)}${p.userId===state.me?.id?' (du)':''}</strong><small>${p.userId===state.me?.id?(!state.localStream?'Mikro aus':state.muted?'Mikro stumm':'Verbunden'):'Sprachverbindung'}</small></div>`;
   }).join('');
-  return `<section class="chat-panel"><header class="topbar"><button class="icon-button mobile-only" data-action="toggle-nav">☰</button><div class="top-channel"><span class="hash">◖))</span><div><h2>${esc(channel.name)}</h2><div class="topic">Sprachkanal · Teilnehmer erscheinen auch vor der Audio-Verbindung.</div></div></div><div class="top-actions"><button class="icon-button" data-action="toastlab" title="ToastLab">✦</button></div></header><div class="chat-history"><div class="welcome-card"><div class="welcome-icon">◖))</div><h2>${esc(channel.name)}</h2><p>Mach dein Mikro an, hol die anderen dazu und redet los. Der Sprachraum bleibt offen, solange jemand verbunden ist.</p></div><div class="voice-stage"><div class="voice-stage-grid">${tiles||'<div class="empty-chat" style="grid-column:1/-1;min-height:160px"><div><div class="empty-icon">♫</div><b>Noch ist niemand im Sprachkanal.</b><p>Der erste Beitritt ist immer der awkward Moment. Du schaffst das.</p></div></div>'}</div><div class="voice-controls">${mePresent?`<button class="voice-control ${state.muted?'active':''}" data-action="voice-toggle-mute">${state.muted?'🎙 Mikro an':'🎙 Mikro stumm'}</button><button class="voice-control ${state.screenStream?'active':''}" data-action="voice-share">▣ ${state.screenStream?'Teilen beenden':'Bildschirm teilen'}</button><button class="voice-control danger" data-action="voice-leave">☎ Verbindung beenden</button>`:`<button class="primary-btn" style="width:auto" data-action="voice-join" data-id="${esc(channel.id)}">♫ Sprachkanal beitreten</button>`}</div><div class="voice-caption">${mePresent?'Du bist verbunden. Wenn Audio nicht durchkommt, braucht dein Host gegebenenfalls TURN-Konfiguration.':'Der Browser fragt beim Beitritt nach Mikrofon-Zugriff.'} ${state.turnConfigured?'TURN-Relay konfiguriert.':'TURN-Relay nicht konfiguriert.'}</div></div></div></section>`;
+  return `<section class="chat-panel"><header class="topbar"><button class="icon-button mobile-only" data-action="toggle-nav">☰</button><div class="top-channel"><span class="hash">◖))</span><div><h2>${esc(channel.name)}</h2><div class="topic">Sprachkanal · Teilnehmer erscheinen auch vor der Audio-Verbindung.</div></div></div><div class="top-actions"><button class="icon-button" data-action="toastlab" title="ToastLab">✦</button></div></header><div class="chat-history"><div class="welcome-card"><div class="welcome-icon">◖))</div><h2>${esc(channel.name)}</h2><p>Mach dein Mikro an, hol die anderen dazu und redet los. Der Sprachraum bleibt offen, solange jemand verbunden ist.</p></div><div class="voice-stage"><div class="voice-stage-grid">${tiles||'<div class="empty-chat" style="grid-column:1/-1;min-height:160px"><div><div class="empty-icon">♫</div><b>Noch ist niemand im Sprachkanal.</b><p>Der erste Beitritt ist immer der awkward Moment. Du schaffst das.</p></div></div>'}</div><div class="voice-controls">${mePresent?`${state.localStream?`<button class="voice-control ${state.muted?'active':''}" data-action="voice-toggle-mute">${state.muted?'🎙 Mikro an':'🎙 Mikro stumm'}</button>`:`<button class="voice-control" data-action="voice-enable-mic">🎙 Mikrofon aktivieren</button>`}<button class="voice-control ${state.screenStream?'active':''}" data-action="voice-share">▣ ${state.screenStream?'Teilen beenden':'Bildschirm teilen'}</button><button class="voice-control danger" data-action="voice-leave">☎ Verbindung beenden</button>`:`<button class="primary-btn" style="width:auto" data-action="voice-join" data-id="${esc(channel.id)}">♫ Sprachkanal beitreten</button>`}</div><div class="voice-caption">${mePresent?(state.localStream?'Du bist verbunden. Wenn Audio nicht durchkommt, braucht dein Host gegebenenfalls TURN-Konfiguration.':esc(state.voiceNotice||'Du bist im Sprachkanal sichtbar, aber dein Mikrofon ist noch nicht verbunden.')):'Der Browser fragt beim Beitritt nach Mikrofon-Zugriff.'} ${state.turnConfigured?'TURN-Relay konfiguriert.':'TURN-Relay nicht konfiguriert.'}</div></div></div></section>`;
 }
 function renderMembers() {
   if(state.mode==='dm') {
@@ -497,6 +497,7 @@ async function loadBootstrapSoft() {
 }
 async function switchServer(id) {
   if(!state.servers.some(s=>s.id===id))return;
+  if(!state.voiceChannelId)++voiceJoinSequence;
   state.mode='channel';state.activeServerId=id;
   const ch=state.channels.find(c=>c.serverId===id&&c.kind==='text')||state.channels.find(c=>c.serverId===id);
   state.activeChannelId=ch?.id||'';state.messageSearch='';state.userScrolled=false;state.draft='';state.messages=[];save('active-channel',state.activeChannelId);state.modal='';
@@ -504,6 +505,7 @@ async function switchServer(id) {
 }
 async function switchChannel(id) {
   const channel=state.channels.find(c=>c.id===id&&c.serverId===state.activeServerId);if(!channel)return;
+  if(!state.voiceChannelId)++voiceJoinSequence;
   state.mode='channel';state.activeChannelId=id;state.messageSearch='';state.userScrolled=false;state.draft='';state.messages=[];save('active-channel',id);state.modal='';state.modalData={};$('#app').classList.remove('nav-open');
   if(channel.kind==='text'){await refreshView();}
   else {
@@ -604,21 +606,35 @@ function exportChat() {
 async function startVoice(channelId) {
   if(state.voiceChannelId===channelId)return;
   if(state.voiceChannelId)leaveVoice(true);
-  if(!navigator.mediaDevices?.getUserMedia){toast('Dieser Browser unterstützt keinen Mikrofonzugriff.','error');return;}
   const joinToken=++voiceJoinSequence;
-  let mediaStream=null, serverJoined=false;
+  let mediaStream=null, serverJoined=false, microphoneNotice='';
+  const localHost=['localhost','127.0.0.1','::1'].includes(location.hostname.toLowerCase());
+  const canCapture=!!navigator.mediaDevices?.getUserMedia&&(window.isSecureContext||localHost);
+  if(!canCapture) {
+    microphoneNotice=!window.isSecureContext&&!localHost
+      ? 'Mikrofon-Audio benötigt HTTPS. Du kannst im Sprachkanal sichtbar bleiben; für Ton muss der Server über eine HTTPS-Adresse geöffnet werden.'
+      : 'Dieser Browser stellt keinen Mikrofonzugriff bereit. Du kannst trotzdem im Sprachkanal sichtbar bleiben.';
+  } else {
+    try {
+      mediaStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+    } catch(e) {
+      microphoneNotice=e.name==='NotAllowedError'
+        ? 'Mikrofonzugriff wurde blockiert. Erlaube das Mikrofon in den Website-Berechtigungen und klicke auf „Mikrofon aktivieren“.'
+        : `Mikrofon nicht verfügbar: ${e.message||e.name}`;
+    }
+  }
+  if(joinToken!==voiceJoinSequence){mediaStream?.getTracks().forEach(t=>t.stop());return;}
+  state.localStream=mediaStream;
+  state.voiceChannelId=channelId;state.muted=!mediaStream;state.voiceNotice=microphoneNotice;
+  const channel=state.channels.find(c=>c.id===channelId);if(channel)state.activeServerId=channel.serverId;state.activeChannelId=channelId;
+  state.messages=[];render();
   try {
-    mediaStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
-    if(joinToken!==voiceJoinSequence){mediaStream.getTracks().forEach(t=>t.stop());return;}
-    state.localStream=mediaStream;
-    state.voiceChannelId=channelId;state.muted=false;
-    const channel=state.channels.find(c=>c.id===channelId);if(channel)state.activeServerId=channel.serverId;state.activeChannelId=channelId;
-    state.messages=[];render();
     await api('/api/voice/join',{method:'POST',body:{channelId}});
     serverJoined=true;
-    if(joinToken!==voiceJoinSequence){await api('/api/voice/leave',{method:'POST',body:{channelId}}).catch(()=>{});mediaStream.getTracks().forEach(t=>t.stop());return;}
+    if(joinToken!==voiceJoinSequence){await api('/api/voice/leave',{method:'POST',body:{channelId}}).catch(()=>{});mediaStream?.getTracks().forEach(t=>t.stop());return;}
     sendWs({type:'join_voice',channelId});
     if(!state.wsReady)toast('Sprachstatus läuft über den Server. Live-Audio wartet auf die Verbindung.');
+    if(microphoneNotice)toast('Du bist im Sprachkanal sichtbar, aber ohne Mikrofon: '+microphoneNotice,'error');
     const d=await api(`/api/voice/participants?channelId=${encodeURIComponent(channelId)}`);
     if(joinToken!==voiceJoinSequence)return;
     state.voiceParticipants[channelId]=d.participants||[];
@@ -630,8 +646,32 @@ async function startVoice(channelId) {
     for(const [key,entry] of [...state.peerConnections.entries()])if(key.startsWith(`${channelId}:`)){entry.pc.close();state.peerConnections.delete(key);state.pendingIce.delete(key);state.remoteStreams.delete(key.slice(channelId.length+1));}
     if(state.voiceChannelId===channelId)state.voiceChannelId='';
     if(state.localStream===mediaStream){mediaStream?.getTracks().forEach(t=>t.stop());state.localStream=null;}
-    state.muted=false;
+    state.voiceNotice='';state.muted=false;
     toast(`Sprachkanal-Beitritt fehlgeschlagen: ${e.message}`,'error');render();
+  }
+}
+async function enableVoiceMicrophone() {
+  const channelId=state.voiceChannelId;
+  if(!channelId)return;
+  const localHost=['localhost','127.0.0.1','::1'].includes(location.hostname.toLowerCase());
+  if(!navigator.mediaDevices?.getUserMedia||(!window.isSecureContext&&!localHost)) {
+    state.voiceNotice='Mikrofon-Audio benötigt HTTPS. Öffne Toastcord über eine HTTPS-Adresse.';
+    render();toast(state.voiceNotice,'error');return;
+  }
+  let stream;
+  try {
+    stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+    if(state.voiceChannelId!==channelId){stream.getTracks().forEach(t=>t.stop());return;}
+    state.localStream=stream;state.muted=false;state.voiceNotice='';
+    for(const [key,entry] of state.peerConnections)if(key.startsWith(`${channelId}:`))for(const track of stream.getTracks())entry.pc.addTrack(track,stream);
+    syncVoicePeers(state.voiceParticipants[channelId]||[]);
+    render();toast('Mikrofon verbunden.','success');
+  } catch(e) {
+    stream?.getTracks().forEach(t=>t.stop());
+    state.voiceNotice=e.name==='NotAllowedError'
+      ? 'Mikrofonzugriff wurde blockiert. Erlaube ihn in den Browser-Einstellungen.'
+      : `Mikrofon konnte nicht aktiviert werden: ${e.message||e.name}`;
+    render();toast(state.voiceNotice,'error');
   }
 }
 function ensurePeer(userId,channelId) {
@@ -685,7 +725,7 @@ function attachRemoteMedia() {
   }
   for(const audio of $$('audio[data-audio-user]'))if(!state.remoteStreams.has(audio.dataset.audioUser))audio.remove();
 }
-function toggleMute() {state.muted=!state.muted;state.localStream?.getAudioTracks().forEach(t=>t.enabled=!state.muted);render();}
+function toggleMute() {if(!state.localStream){toast('Verbinde zuerst dein Mikrofon.','error');return;}state.muted=!state.muted;state.localStream.getAudioTracks().forEach(t=>t.enabled=!state.muted);render();}
 function stopScreenShare() {
   const stream=state.screenStream;if(!stream)return;state.screenStream=null;
   for(const track of stream.getTracks())track.stop();
@@ -707,7 +747,7 @@ function leaveVoice(notify=true) {
   ++voiceJoinSequence;
   const channelId=state.voiceChannelId;if(channelId){if(notify)sendWs({type:'leave_voice',channelId});api('/api/voice/leave',{method:'POST',body:{channelId}}).catch(()=>{});}
   for(const track of state.localStream?.getTracks()||[])track.stop();for(const track of state.screenStream?.getTracks()||[])track.stop();
-  for(const {pc} of state.peerConnections.values())pc.close();state.peerConnections.clear();state.remoteStreams.clear();state.pendingIce.clear();state.localStream=null;state.screenStream=null;state.voiceChannelId='';state.muted=false;
+  for(const {pc} of state.peerConnections.values())pc.close();state.peerConnections.clear();state.remoteStreams.clear();state.pendingIce.clear();state.localStream=null;state.screenStream=null;state.voiceChannelId='';state.voiceNotice='';state.muted=false;
   if(channelId){state.voiceParticipants[channelId]=(state.voiceParticipants[channelId]||[]).filter(p=>p.userId!==state.me?.id);}render();
 }
 
@@ -745,6 +785,7 @@ function handleClick(event) {
   if(action==='edit-message'){const message=state.messages.find(m=>m.id===el.dataset.id);state.modal='edit-message';state.modalData={message};render();return;}
   if(action==='delete-message'){deleteMessage(el.dataset.id);return;}
   if(action==='voice-join'){startVoice(el.dataset.id);return;}
+  if(action==='voice-enable-mic'){enableVoiceMicrophone();return;}
   if(action==='voice-leave'){leaveVoice();return;}
   if(action==='voice-toggle-mute'){toggleMute();return;}
   if(action==='voice-share'){toggleScreenShare();return;}
