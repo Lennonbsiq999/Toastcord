@@ -484,10 +484,10 @@ test('local member can recover the admin panel from the same PC', async () => {
     const customResponse=await fetch(localBase+'/api/servers',{method:'POST',headers:{'Content-Type':'application/json',Cookie:ownerCookie},body:JSON.stringify({name:'Custom Local Server'})});
     const custom=await customResponse.json();
     assert.equal(customResponse.status,201,JSON.stringify(custom));
-    const customJoinResponse=await fetch(localBase+'/api/servers/join',{method:'POST',headers:{'Content-Type':'application/json',Cookie},body:JSON.stringify({inviteCode:custom.server.inviteCode})});
+    const customJoinResponse=await fetch(localBase+'/api/servers/join',{method:'POST',headers:{'Content-Type':'application/json',Cookie:cookie},body:JSON.stringify({inviteCode:custom.server.inviteCode})});
     const customJoin=await customJoinResponse.json();
     assert.equal(customJoinResponse.status,200,JSON.stringify(customJoin));
-    const customClaim=await fetch(localBase+'/api/local/claim-owner',{method:'POST',headers:{'Content-Type':'application/json',Cookie},body:JSON.stringify({serverId:custom.server.id})});
+    const customClaim=await fetch(localBase+'/api/local/claim-owner',{method:'POST',headers:{'Content-Type':'application/json',Cookie:cookie},body:JSON.stringify({serverId:custom.server.id})});
     assert.equal(customClaim.status,403,'Local recovery must not let a member take over a custom server.');
     const claim=await fetch(localBase+'/api/local/claim-owner',{
       method:'POST',headers:{'Content-Type':'application/json',Cookie:cookie},
