@@ -263,6 +263,8 @@ test('direct messages are private and persist for both participants', async () =
 
 
 test('kicked members lose access and bootstrap does not re-add them', async () => {
+  const ownMessage=await request('/api/messages',{method:'POST',cookie:cookieB,body:{channelId:customChannelId,text:'Eigene Nachricht vor dem Kick'}});
+  assert.equal(ownMessage.status,201,JSON.stringify(ownMessage.json));
   const kicked=await request('/api/admin/members/'+encodeURIComponent(userB.id)+'?serverId='+encodeURIComponent(serverId),{method:'DELETE',cookie:cookieA});
   assert.equal(kicked.status,200,JSON.stringify(kicked.json));
 
@@ -273,6 +275,10 @@ test('kicked members lose access and bootstrap does not re-add them', async () =
   assert.ok(!bootstrap.json.servers.some(s=>s.id===serverId),'A kicked member must not silently rejoin during bootstrap.');
   const overview=await request('/api/admin/overview?serverId='+encodeURIComponent(serverId),{cookie:cookieB});
   assert.equal(overview.status,403);
+  const edit=await request('/api/messages/'+encodeURIComponent(ownMessage.json.message.id),{method:'PATCH',cookie:cookieB,body:{text:'Nach dem Kick bearbeiten'}});
+  assert.equal(edit.status,403,'Kicked members must not edit their old server messages.');
+  const remove=await request('/api/messages/'+encodeURIComponent(ownMessage.json.message.id),{method:'DELETE',cookie:cookieB});
+  assert.equal(remove.status,403,'Kicked members must not delete their old server messages.');
 });
 
 test('two clients receive live messages and voice join/leave events', async () => {
@@ -453,6 +459,9 @@ test('admin panel renderer returns HTML synchronously for renderModal', () => {
   assert.match(appSource, /Admin-Panel öffnen/);
   assert.match(appSource, /data-action="claim-local-owner"/);
   assert.match(appSource, /state.localMode=!!data.localMode/);
+  assert.ok(appSource.includes('const requestId=++viewLoadSequence;'));
+  assert.ok(appSource.includes('state.activeChannelId===channelId'));
+  assert.ok(appSource.includes("if(serverJoined)await api('/api/voice/leave'"));
   assert.ok(appSource.includes('Build 26.10.26-2'));
   const launcherSource = fs.readFileSync(new URL('../Start-Toastcord.bat', import.meta.url), 'utf8');
   assert.match(launcherSource, /:choose_port/);
