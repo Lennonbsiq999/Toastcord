@@ -346,6 +346,10 @@ export function createAppServer(options = {}) {
       if (homeServer.ownerId === 'system' || !ownerExists) homeServer.ownerId = firstUser.id;
       const owner = store.state.users.find(user => user.id === homeServer.ownerId);
       if (owner) {
+        for (const membership of store.state.memberships.filter(m => m.serverId === homeServer.id)) {
+          if (membership.userId === owner.id) membership.role = 'owner';
+          else if (membership.role === 'owner') membership.role = 'member';
+        }
         let membership = store.state.memberships.find(m => m.serverId === homeServer.id && m.userId === owner.id);
         if (!membership) {
           membership = { id:newId('mem_'), serverId:homeServer.id, userId:owner.id, role:'owner', joinedAt:owner.createdAt || Date.now() };
@@ -380,6 +384,8 @@ export function createAppServer(options = {}) {
             if (password.length < 10 || password.length > 200) { sendError(res, 400, 'Das Passwort muss mindestens 10 Zeichen lang sein.'); return; }
             if (store.state.users.some(u => u.username.toLocaleLowerCase() === username.toLocaleLowerCase())) { sendError(res, 409, 'Dieser Benutzername ist bereits vergeben.'); return; }
             const user = { id: newId('usr_'), username, displayName: displayName.slice(0,32) || username, passwordHash: await hashPassword(password), status:'online', avatarColor:['#f4a261','#e76f51','#2a9d8f','#8b7cf6','#53b3cb'][store.state.users.length % 5], createdAt:Date.now() };
+            // Another registration may finish while scrypt hashes the password.
+            if (store.state.users.some(u => u.username.toLocaleLowerCase() === username.toLocaleLowerCase())) { sendError(res, 409, 'Dieser Benutzername ist bereits vergeben.'); return; }
             const token = randomBytes(32).toString('base64url');
             const homeServer = store.state.servers.find(server => server.id === 'toast-zone');
             const localBootstrapOwner = localMode && store.state.users.length === 0 && homeServer?.ownerId === 'system';
