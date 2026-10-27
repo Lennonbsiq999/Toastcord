@@ -461,8 +461,8 @@ function handleWs(msg) {
     return;
   }
   if(msg.type==='message_delete') {state.messages=state.messages.filter(m=>m.id!==msg.messageId);if(!state.modal)render();return;}
-  if(msg.type==='member_update'||msg.type==='profile_update'||msg.type==='presence_update') {refreshMembers().then(()=>{if(!state.modal)render();});return;}
-  if(msg.type==='channel_update'||msg.type==='server_update') {loadBootstrapSoft();return;}
+  if(msg.type==='member_update'||msg.type==='threads_update'||msg.type==='channel_update'||msg.type==='server_update') {loadBootstrapSoft();return;}
+  if(msg.type==='profile_update'||msg.type==='presence_update') {refreshMembers().then(()=>{if(!state.modal)render();});return;}
   if(msg.type==='server_kicked') {
     state.servers=state.servers.filter(s=>s.id!==msg.serverId);state.channels=state.channels.filter(c=>c.serverId!==msg.serverId);
     if(state.activeServerId===msg.serverId){leaveVoice(false);state.activeServerId=state.servers[0]?.id||'toast-zone';state.activeChannelId=state.channels.find(c=>c.serverId===state.activeServerId&&c.kind==='text')?.id||'ch-general';state.mode='channel';state.modal='';refreshView().catch(()=>{});}
@@ -485,6 +485,7 @@ async function loadBootstrapSoft() {
     state.localMode=!!d.localMode;
     state.servers=d.servers||[];
     state.channels=d.channels||[];
+    state.threads=d.threads||[];
     if(!state.servers.some(s=>s.id===state.activeServerId)) {
       state.activeServerId=state.servers[0]?.id||'';
       state.activeChannelId=state.channels.find(c=>c.serverId===state.activeServerId&&c.kind==='text')?.id||'';
