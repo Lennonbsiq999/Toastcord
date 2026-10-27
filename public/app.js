@@ -16,7 +16,7 @@ const state = {
 };
 let liveSyncTimer = null, liveMessageSyncBusy = false, liveVoiceSyncBusy = false, lastVoiceSyncAt = 0;
 const REACTION_EMOJIS = ['👍','❤️','😂','🔥','🎉','🍞','👀','🤔','💀','🚀'];
-let pendingSubmit = false;
+let pendingSubmit = false, viewLoadSequence = 0, memberLoadSequence = 0, bootstrapLoadSequence = 0, voiceJoinSequence = 0;
 
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -375,23 +375,57 @@ async function boot() {
   } catch(e) { state.me=null; renderAuth(); toast(e.message,'error'); }
 }
 async function refreshView() {
-  if(state.mode==='dm') {
-    const thread=state.threads.find(t=>t.id===state.activeThreadId);
-    if(thread){try{const data=await api(`/api/dm/messages?threadId=${encodeURIComponent(thread.id)}`);state.messages=data.messages||[];}catch(e){state.messages=[];toast(`Direktnachrichten konnten nicht geladen werden: ${e.message}`,'error');}}
-    else state.messages=[];
-    await refreshMembers();render();return;
+  const requestId=++viewLoadSequence;
+  const mode=state.mode, serverId=state.activeServerId, channelId=state.activeChannelId, threadId=state.activeThreadId;
+  const stillCurrent=()=>requestId===viewLoadSequence && state.mode===mode &&
+    (mode==='dm' ? state.activeThreadId===threadId : state.activeServerId===serverId && state.activeChannelId===channelId);
+  if(mode==='dm') {
+    const thread=state.threads.find(t=>t.id===threadId);
+    if(thread) {
+      try {
+        const data=await api(`/api/dm/messages?threadId=${encodeURIComponent(thread.id)}`);
+        if(!stillCurrent())return;
+        state.messages=data.messages||[];
+      } catch(e) {
+        if(!stillCurrent())return;
+        state.messages=[];
+        toast(`Direktnachrichten konnten nicht geladen werden: ${e.message}`,'error');
+      }
+    } else {
+      if(!stillCurrent())return;
+      state.messages=[];
+    }
+  } else {
+    const channel=state.channels.find(c=>c.id===channelId&&c.serverId===serverId);
+    if(!channel)return;
+    if(channel.kind==='text') {
+      try {
+        const data=await api(`/api/messages?channelId=${encodeURIComponent(channel.id)}`);
+        if(!stillCurrent())return;
+        state.messages=data.messages||[];
+      } catch(e) {
+        if(!stillCurrent())return;
+        state.messages=[];
+        toast(`Nachrichten konnten nicht geladen werden: ${e.message}`,'error');
+      }
+    } else {
+      if(!stillCurrent())return;
+      state.messages=[];
+    }
   }
-  const channel=currentChannel(); if(!channel)return;
-  if(channel.kind==='text') {
-    try { const data=await api(`/api/messages?channelId=${encodeURIComponent(channel.id)}`); state.messages=data.messages||[]; }
-    catch(e) { state.messages=[]; toast(`Nachrichten konnten nicht geladen werden: ${e.message}`,'error'); }
-  }
-  await refreshMembers(); render();
+  if(!stillCurrent())return;
+  await refreshMembers();
+  if(!stillCurrent())return;
+  render();
 }
 async function refreshMembers() {
   const server=currentServer(); if(!server)return;
-  try { const data=await api(`/api/members?serverId=${encodeURIComponent(server.id)}`); state.members=(data.members||[]).map(m=>({...m,serverId:server.id})); }
-  catch(e) { console.warn('Member refresh failed',e); }
+  const serverId=server.id, requestId=++memberLoadSequence;
+  try {
+    const data=await api(`/api/members?serverId=${encodeURIComponent(serverId)}`);
+    if(requestId!==memberLoadSequence || currentServer()?.id!==serverId)return;
+    state.members=(data.members||[]).map(m=>({...m,serverId}));
+  } catch(e) { console.warn('Member refresh failed',e); }
 }
 function connectWs() {
   if(!state.me || state.wsIntentionalClose) return;
@@ -442,33 +476,83 @@ function handleWs(msg) {
   if(msg.type==='rtc_signal') {handleRtcSignal(msg).catch(e=>console.debug('RTC signal',e));return;}
   if(msg.type==='error')toast(msg.message||'Live-Verbindungsfehler','error');
 }
-async function loadBootstrapSoft() { try {const d=await api('/api/bootstrap');state.servers=d.servers||[];state.channels=d.channels||[];refreshMembers().then(()=>{if(!state.modal)render();});if(!state.modal)render();}catch{} }
+async function loadBootstrapSoft() {
+  const requestId=++bootstrapLoadSequence;
+  try {
+    const d=await api('/api/bootstrap');
+    if(requestId!==bootstrapLoadSequence||!state.me)return;
+    const previousServerId=state.activeServerId;
+    state.localMode=!!d.localMode;
+    state.servers=d.servers||[];
+    state.channels=d.channels||[];
+    if(!state.servers.some(s=>s.id===state.activeServerId)) {
+      state.activeServerId=state.servers[0]?.id||'';
+      state.activeChannelId=state.channels.find(c=>c.serverId===state.activeServerId&&c.kind==='text')?.id||'';
+      state.messages=[];
+      if(previousServerId!==state.activeServerId)state.modal='';
+    }
+    await refreshMembers();
+    if(!state.modal)render();
+  } catch(e) { console.debug('Bootstrap refresh failed; retrying later',e); }
+}
 async function switchServer(id) {
-  if(!state.servers.some(s=>s.id===id))return;state.mode='channel';state.activeServerId=id;
+  if(!state.servers.some(s=>s.id===id))return;
+  state.mode='channel';state.activeServerId=id;
   const ch=state.channels.find(c=>c.serverId===id&&c.kind==='text')||state.channels.find(c=>c.serverId===id);
-  state.activeChannelId=ch?.id||'';state.messageSearch='';state.userScrolled=false;save('active-channel',state.activeChannelId);state.modal='';await refreshView();
+  state.activeChannelId=ch?.id||'';state.messageSearch='';state.userScrolled=false;state.draft='';state.messages=[];save('active-channel',state.activeChannelId);state.modal='';
+  await refreshView();
 }
 async function switchChannel(id) {
   const channel=state.channels.find(c=>c.id===id&&c.serverId===state.activeServerId);if(!channel)return;
-  state.mode='channel';state.activeChannelId=id;state.messageSearch='';state.userScrolled=false;save('active-channel',id);state.modal='';state.modalData={};$('#app').classList.remove('nav-open');
-  if(channel.kind==='text'){state.messages=[];await refreshView();}else {render();try{const d=await api(`/api/voice/participants?channelId=${encodeURIComponent(id)}`);state.voiceParticipants[id]=d.participants||[];render();}catch{}}
+  state.mode='channel';state.activeChannelId=id;state.messageSearch='';state.userScrolled=false;state.draft='';state.messages=[];save('active-channel',id);state.modal='';state.modalData={};$('#app').classList.remove('nav-open');
+  if(channel.kind==='text'){await refreshView();}
+  else {
+    render();
+    try {
+      const d=await api(`/api/voice/participants?channelId=${encodeURIComponent(id)}`);
+      if(state.mode!=='channel'||state.activeServerId!==channel.serverId||state.activeChannelId!==id)return;
+      state.voiceParticipants[id]=d.participants||[];
+      render();
+    } catch(e) { console.debug('Voice participant refresh failed',e); }
+  }
 }
 async function sendMessage(raw) {
   let text=String(raw||'').trim();if(!text||pendingSubmit)return;
-  if(state.mode==='dm'){
-    const thread=state.threads.find(t=>t.id===state.activeThreadId);if(!thread){toast('Wähle zuerst eine Direktnachricht aus.','error');return;}
-    pendingSubmit=true;try{const d=await api('/api/dm/messages',{method:'POST',body:{threadId:thread.id,text}});if(!state.messages.some(m=>m.id===d.message.id))state.messages.push(d.message);state.draft='';const input=$('#composer-input');if(input)input.value='';render();}catch(e){toast(e.message,'error');}finally{pendingSubmit=false;}return;
+  if(state.mode==='dm') {
+    const thread=state.threads.find(t=>t.id===state.activeThreadId);
+    if(!thread){toast('Wähle zuerst eine Direktnachricht aus.','error');return;}
+    const threadId=thread.id;
+    pendingSubmit=true;
+    try {
+      const d=await api('/api/dm/messages',{method:'POST',body:{threadId,text}});
+      if(state.mode==='dm'&&state.activeThreadId===threadId) {
+        if(!state.messages.some(m=>m.id===d.message.id))state.messages.push(d.message);
+        state.draft='';
+        const input=$('#composer-input');if(input)input.value='';
+        render();
+      }
+    } catch(e) {toast(e.message,'error');}
+    finally {pendingSubmit=false;}
+    return;
   }
   const channel=currentChannel();if(!channel||channel.kind!=='text')return;
+  const channelId=channel.id, serverId=state.activeServerId;
   if(text==='/help')text='Verfügbare Befehle: /help, /roll, /flip, /shrug, /poll Frage | Option A | Option B';
   else if(text==='/roll')text=`🎲 Ergebnis: ${Math.floor(Math.random()*6)+1}`;
   else if(text==='/flip')text=`🪙 ${Math.random()<.5?'Kopf':'Zahl'}`;
   else if(text==='/shrug')text='¯\\_(ツ)_/¯';
   else if(text.startsWith('/poll ')) {const parts=text.slice(6).split('|').map(v=>v.trim()).filter(Boolean);if(parts.length<3){toast('Format: /poll Frage | Option A | Option B','error');return;}text=`📊 **${parts[0]}**\n${parts.slice(1).map((v,i)=>`${i+1}. ${v}`).join('\n')}\nStimme mit der Nummer im Chat ab.`;}
   pendingSubmit=true;
-  try {const d=await api('/api/messages',{method:'POST',body:{channelId:channel.id,text}});if(!state.messages.some(m=>m.id===d.message.id))state.messages.push(d.message);state.draft='';const el=$('#composer-input');if(el)el.value='';render();}
-  catch(e){toast(e.message,'error');}
-  finally{pendingSubmit=false;}
+  try {
+    const d=await api('/api/messages',{method:'POST',body:{channelId,text}});
+    if(state.mode==='channel'&&state.activeServerId===serverId&&state.activeChannelId===channelId) {
+      if(!state.messages.some(m=>m.id===d.message.id))state.messages.push(d.message);
+      state.draft='';
+      const input=$('#composer-input');if(input)input.value='';
+      render();
+    }
+  } catch(e) {toast(e.message,'error');}
+  finally {pendingSubmit=false;}
 }
 async function createServer(form) {
   const body=Object.fromEntries(new FormData(form).entries());try{const d=await api('/api/servers',{method:'POST',body});state.servers.push(d.server);state.channels.push(...d.channels);state.activeServerId=d.server.id;state.activeChannelId=d.channels.find(c=>c.kind==='text')?.id||d.channels[0]?.id;state.modal='';await refreshView();toast('Server erstellt. Die digitale Hausordnung bleibt dir erspart.','success');}catch(e){modalError(e.message);}
@@ -521,17 +605,34 @@ async function startVoice(channelId) {
   if(state.voiceChannelId===channelId)return;
   if(state.voiceChannelId)leaveVoice(true);
   if(!navigator.mediaDevices?.getUserMedia){toast('Dieser Browser unterstützt keinen Mikrofonzugriff.','error');return;}
+  const joinToken=++voiceJoinSequence;
+  let mediaStream=null, serverJoined=false;
   try {
-    state.localStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+    mediaStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+    if(joinToken!==voiceJoinSequence){mediaStream.getTracks().forEach(t=>t.stop());return;}
+    state.localStream=mediaStream;
     state.voiceChannelId=channelId;state.muted=false;
     const channel=state.channels.find(c=>c.id===channelId);if(channel)state.activeServerId=channel.serverId;state.activeChannelId=channelId;
-    render();
+    state.messages=[];render();
     await api('/api/voice/join',{method:'POST',body:{channelId}});
+    serverJoined=true;
+    if(joinToken!==voiceJoinSequence){await api('/api/voice/leave',{method:'POST',body:{channelId}}).catch(()=>{});mediaStream.getTracks().forEach(t=>t.stop());return;}
     sendWs({type:'join_voice',channelId});
     if(!state.wsReady)toast('Sprachstatus läuft über den Server. Live-Audio wartet auf die Verbindung.');
-    const d=await api(`/api/voice/participants?channelId=${encodeURIComponent(channelId)}`);state.voiceParticipants[channelId]=d.participants||[];
+    const d=await api(`/api/voice/participants?channelId=${encodeURIComponent(channelId)}`);
+    if(joinToken!==voiceJoinSequence)return;
+    state.voiceParticipants[channelId]=d.participants||[];
     syncVoicePeers(state.voiceParticipants[channelId]||[]);render();
-  } catch(e) {toast(`Sprachkanal-Beitritt fehlgeschlagen: ${e.message}`,'error');state.voiceChannelId='';state.localStream?.getTracks().forEach(t=>t.stop());state.localStream=null;render();}
+  } catch(e) {
+    if(joinToken!==voiceJoinSequence){mediaStream?.getTracks().forEach(t=>t.stop());return;}
+    if(serverJoined)await api('/api/voice/leave',{method:'POST',body:{channelId}}).catch(()=>{});
+    state.voiceParticipants[channelId]=(state.voiceParticipants[channelId]||[]).filter(p=>p.userId!==state.me?.id);
+    for(const [key,entry] of [...state.peerConnections.entries()])if(key.startsWith(`${channelId}:`)){entry.pc.close();state.peerConnections.delete(key);state.pendingIce.delete(key);state.remoteStreams.delete(key.slice(channelId.length+1));}
+    if(state.voiceChannelId===channelId)state.voiceChannelId='';
+    if(state.localStream===mediaStream){mediaStream?.getTracks().forEach(t=>t.stop());state.localStream=null;}
+    state.muted=false;
+    toast(`Sprachkanal-Beitritt fehlgeschlagen: ${e.message}`,'error');render();
+  }
 }
 function ensurePeer(userId,channelId) {
   const key=`${channelId}:${userId}`;let entry=state.peerConnections.get(key);if(entry)return entry;
@@ -603,6 +704,7 @@ async function toggleScreenShare() {
   } catch(e){toast(`Bildschirmfreigabe abgebrochen: ${e.message}`,'error');}
 }
 function leaveVoice(notify=true) {
+  ++voiceJoinSequence;
   const channelId=state.voiceChannelId;if(channelId){if(notify)sendWs({type:'leave_voice',channelId});api('/api/voice/leave',{method:'POST',body:{channelId}}).catch(()=>{});}
   for(const track of state.localStream?.getTracks()||[])track.stop();for(const track of state.screenStream?.getTracks()||[])track.stop();
   for(const {pc} of state.peerConnections.values())pc.close();state.peerConnections.clear();state.remoteStreams.clear();state.pendingIce.clear();state.localStream=null;state.screenStream=null;state.voiceChannelId='';state.muted=false;
