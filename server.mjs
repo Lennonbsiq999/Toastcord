@@ -426,10 +426,13 @@ export function createAppServer(options = {}) {
         if (!user) { sendError(res, 401, 'Deine Sitzung ist abgelaufen. Melde dich erneut an.'); return; }
         if (pathname === '/api/local/claim-owner' && req.method === 'POST') {
           const address = req.socket.remoteAddress || '';
+          const hostName = url.hostname.toLowerCase().replace(/^\\[|\\]$/g, '');
           const isLoopback = address === '::1' || address === '127.0.0.1' || address.startsWith('127.') || address === '::ffff:127.0.0.1' || address.startsWith('::ffff:127.');
-          if (!localMode || !isLoopback) { sendError(res, 403, 'Die lokale Wiederherstellung ist nur auf dem lokalen Toastcord-PC erlaubt.'); return; }
+          const isLocalHost = ['localhost','127.0.0.1','::1'].includes(hostName);
+          if (!localMode || !isLoopback || !isLocalHost) { sendError(res, 403, 'Die lokale Wiederherstellung ist nur auf dem lokalen Toastcord-PC erlaubt.'); return; }
           const body = await readBody(req);
           const serverId = String(body.serverId || 'toast-zone');
+          if (serverId !== 'toast-zone') { sendError(res, 403, 'Die lokale Wiederherstellung gilt nur für Toast Zone. Andere Server müssen von ihrem Owner verwaltet werden.'); return; }
           const targetServer = store.state.servers.find(s => s.id === serverId);
           if (!targetServer || !store.isMember(serverId, user.id)) { sendError(res, 403, 'Du musst Mitglied dieses Servers sein.'); return; }
           store.update(state => {
