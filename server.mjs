@@ -206,6 +206,11 @@ function sendVoiceState(store, serverId, channelId) {
   const participants = store.state.voiceSessions.filter(s => s.channelId === channelId).map(s => ({ userId: s.userId, displayName: store.userById(s.userId)?.displayName || 'Mitglied', channelId: s.channelId }));
   broadcast({ type: 'voice_state', serverId, channelId, participants }, c => c.userId && store.isMember(serverId, c.userId));
 }
+function usersShareServer(store, firstUserId, secondUserId) {
+  if (firstUserId === secondUserId) return true;
+  return store.state.servers.some(server => store.isMember(server.id, firstUserId) && store.isMember(server.id, secondUserId));
+}
+
 function canAccessMessage(store, userId, message) {
   if (!message) return false;
   if (message.threadId) {
@@ -280,7 +285,7 @@ function handleWsText(client, text) {
   if (msg.type === 'presence') {
     const status = ['online','idle','dnd','invisible'].includes(msg.status) ? msg.status : 'online';
     const user = store.userById(client.userId);
-    if (user) { user.status = status; store.flush(); broadcast({ type: 'presence_update', user: store.safeUser(user) }); }
+    if (user) { user.status = status; store.flush(); broadcast({ type: 'presence_update', user: store.safeUser(user) }, c => usersShareServer(store, user.id, c.userId)); }
   }
 }
 function attachWebSocket(server, store) {
@@ -454,7 +459,8 @@ export function createAppServer(options = {}) {
           const serverIds = new Set(servers.map(s => s.id));
           const channels = store.state.channels.filter(c => serverIds.has(c.serverId));
           const threads = store.state.threads.filter(t => t.participants.includes(user.id)).map(t => { const otherUserId = t.participants.find(id => id !== user.id) || user.id; return { ...t, otherUserId, otherDisplayName:store.safeUser(store.userById(otherUserId))?.displayName || 'Mitglied' }; });
-          sendJson(res, 200, { me:store.safeUser(user), localMode, servers, channels, threads, members:servers.flatMap(s => store.members(s.id).map(m => ({...m,serverId:s.id}))), voiceSessions:store.state.voiceSessions }); return;
+          const voiceSessions=store.state.voiceSessions.filter(v=>serverIds.has(v.serverId)).map(v=>({userId:v.userId,channelId:v.channelId,serverId:v.serverId,joinedAt:v.joinedAt}));
+          sendJson(res, 200, { me:store.safeUser(user), localMode, servers, channels, threads, members:servers.flatMap(s => store.members(s.id).map(m => ({...m,serverId:s.id}))), voiceSessions }); return;
         }
         if (pathname === '/api/admin/overview' && req.method === 'GET') {
           const serverId = url.searchParams.get('serverId') || '';
@@ -715,7 +721,7 @@ export function createAppServer(options = {}) {
         if (pathname === '/api/profile' && req.method === 'PATCH') {
           const body=await readBody(req); const displayName=normalizeName(body.displayName); if(displayName.length<2){sendError(res,400,'Der Anzeigename ist zu kurz.');return;}
           store.update(state=>{user.displayName=displayName; if(['online','idle','dnd','invisible'].includes(body.status))user.status=body.status;});
-          broadcast({type:'profile_update',user:store.safeUser(user)}); sendJson(res,200,{user:store.safeUser(user)}); return;
+          broadcast({type:'profile_update',user:store.safeUser(user)}, c => usersShareServer(store,user.id,c.userId)); sendJson(res,200,{user:store.safeUser(user)}); return;
         }
         if (pathname === '/api/invites' && req.method === 'POST') {
           const body=await readBody(req); const server=store.state.servers.find(s=>s.id===body.serverId);
