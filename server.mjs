@@ -229,6 +229,7 @@ function recordAdminAction(store, { serverId, actorId, action, targetId = '', de
 function closeWs(client) {
   if (!client || client.closed) return;
   client.closed = true;
+  if (client.sessionTimer) clearTimeout(client.sessionTimer);
   liveSockets.delete(client);
   for (const voice of client.joinedVoice || []) {
     const idx = client.store.state.voiceSessions.findIndex(s => s.userId === client.userId && s.channelId === voice && (!s.connectionId || s.connectionId === client.connectionId));
@@ -244,6 +245,8 @@ function closeWs(client) {
   try { client.socket.end(Buffer.from([0x88, 0x00])); } catch {}
 }
 function handleWsText(client, text) {
+  const activeSession = client.store.state.sessions.some(session => session.tokenHash === client.sessionTokenHash && session.userId === client.userId && session.expiresAt > Date.now());
+  if (!activeSession) { closeWs(client); return; }
   let msg;
   try { msg = JSON.parse(text); } catch { return; }
   const store = client.store;
@@ -291,6 +294,10 @@ function handleWsText(client, text) {
     if (user) { user.status = status; store.flush(); broadcast({ type: 'presence_update', user: store.safeUser(user) }, c => usersShareServer(store, user.id, c.userId)); }
   }
 }
+function closeUserSockets(userId) {
+  for (const client of [...liveSockets]) if (client.userId === userId) closeWs(client);
+}
+
 function attachWebSocket(server, store) {
   server.on('upgrade', (req, socket) => {
     let upgradePath = ''; try { upgradePath = new URL(req.url, `http://${req.headers.host || 'localhost'}`).pathname; } catch {}
@@ -312,7 +319,9 @@ function attachWebSocket(server, store) {
     if (!user) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return; }
     const accept = createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
-    const client = { socket, userId: user.id, connectionId: newId('ws_'), store, buffer: Buffer.alloc(0), closed: false, joinedVoice: new Set() };
+    const client = { socket, userId: user.id, sessionTokenHash:hashToken(token), sessionExpiresAt:session.expiresAt, connectionId: newId('ws_'), store, buffer: Buffer.alloc(0), closed: false, joinedVoice: new Set() };
+    client.sessionTimer = setTimeout(() => closeWs(client), Math.max(0, session.expiresAt - Date.now()));
+    client.sessionTimer.unref?.();
     liveSockets.add(client);
     for (const v of store.state.voiceSessions.filter(v => v.userId === user.id)) client.joinedVoice.add(v.channelId);
     sendWs(client, { type: 'connected', user: store.safeUser(user) });
@@ -418,10 +427,14 @@ export function createAppServer(options = {}) {
             authFailures.delete(ip);
             const token = randomBytes(32).toString('base64url');
             store.update(state => { state.sessions = state.sessions.filter(s => s.expiresAt > Date.now() && s.userId !== user.id); state.sessions.push({ tokenHash:hashToken(token),userId:user.id,expiresAt:Date.now()+SESSION_TTL,createdAt:Date.now() }); });
+            // A successful re-login rotates the single session and revokes every older live socket.
+            closeUserSockets(user.id);
             setCookie(res, token, secureCookie); sendJson(res, 200, { user:store.safeUser(user) }); return;
           }
           if (pathname === '/api/auth/logout' && req.method === 'POST') {
-            const token = getCookie(req, COOKIE); store.update(state => { state.sessions = state.sessions.filter(s => s.tokenHash !== hashToken(token)); });
+            const token = getCookie(req, COOKIE), session = store.state.sessions.find(s => s.tokenHash === hashToken(token) && s.expiresAt > Date.now());
+            store.update(state => { state.sessions = state.sessions.filter(s => s.tokenHash !== hashToken(token)); });
+            if (session) closeUserSockets(session.userId);
             clearCookie(res, secureCookie); sendJson(res, 200, { ok:true }); return;
           }
         }
