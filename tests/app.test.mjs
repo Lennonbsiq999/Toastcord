@@ -290,6 +290,28 @@ test('direct messages are private, delivered live, and persist for both particip
 });
 
 
+test('moving voice channels refreshes members in the previous server', async () => {
+  const oldVoice=app.store.state.channels.find(c=>c.serverId===serverId&&c.kind==='voice');
+  assert.ok(oldVoice,'Test server must contain a voice channel.');
+  const wsA=await openWebSocket(cookieA);
+  const wsB=await openWebSocket(cookieB);
+  try {
+    await Promise.all([wsA.waitFor(m=>m.type==='connected'),wsB.waitFor(m=>m.type==='connected')]);
+    const firstJoin=await request('/api/voice/join',{method:'POST',cookie:cookieA,body:{channelId:oldVoice.id}});
+    assert.equal(firstJoin.status,200,JSON.stringify(firstJoin.json));
+    await wsB.waitFor(m=>m.type==='member_update'&&m.serverId===serverId);
+    const moved=await request('/api/voice/join',{method:'POST',cookie:cookieA,body:{channelId:'ch-lobby'}});
+    assert.equal(moved.status,200,JSON.stringify(moved.json));
+    await wsB.waitFor(m=>m.type==='member_update'&&m.serverId===serverId);
+    const members=await request('/api/members?serverId='+encodeURIComponent(serverId),{cookie:cookieA});
+    assert.equal(members.status,200);
+    assert.equal(members.json.members.find(m=>m.userId===userA.id)?.voice,false,'Old server must no longer show the user in voice.');
+  } finally {
+    await request('/api/voice/leave',{method:'POST',cookie:cookieA,body:{channelId:'ch-lobby'}});
+    await Promise.all([wsA.close(),wsB.close()]);
+  }
+});
+
 test('kicked members lose access and bootstrap does not re-add them', async () => {
   const ownMessage=await request('/api/messages',{method:'POST',cookie:cookieB,body:{channelId:customChannelId,text:'Eigene Nachricht vor dem Kick'}});
   assert.equal(ownMessage.status,201,JSON.stringify(ownMessage.json));
