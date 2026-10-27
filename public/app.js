@@ -278,29 +278,43 @@ async function openAdminPanel() {
   state.modal='admin-panel'; state.adminData=null; state.adminError=''; await loadAdminPanelData();
 }
 async function changeAdminRole(userId, role) {
-  try { await api('/api/admin/members/'+encodeURIComponent(userId)+'/role',{method:'POST',body:{serverId:state.activeServerId,role}}); toast(role==='admin'?'Admin-Rechte vergeben.':'Admin-Rechte entfernt.','success'); await loadAdminPanelData(); await refreshMembers(); }
-  catch(e) { toast(e.message,'error'); }
+  const accountId=state.me?.id, serverId=state.activeServerId;
+  try {
+    await api('/api/admin/members/'+encodeURIComponent(userId)+'/role',{method:'POST',body:{serverId,role}});
+    if(state.me?.id!==accountId||state.activeServerId!==serverId)return;
+    toast(role==='admin'?'Admin-Rechte vergeben.':'Admin-Rechte entfernt.','success'); await loadAdminPanelData(); await refreshMembers();
+  } catch(e) {if(state.me?.id===accountId)toast(e.message,'error');}
 }
 async function kickAdminMember(userId) {
+  const accountId=state.me?.id, serverId=state.activeServerId;
   const member=state.adminData?.members.find(m=>m.userId===userId);
   if(!member||!confirm(member.displayName+' wirklich vom Server entfernen?')) return;
-  try { await api('/api/admin/members/'+encodeURIComponent(userId)+'?serverId='+encodeURIComponent(state.activeServerId),{method:'DELETE'}); toast(member.displayName+' wurde vom Server entfernt.','success'); await loadAdminPanelData(); await refreshMembers(); }
-  catch(e) { toast(e.message,'error'); }
+  try {
+    await api('/api/admin/members/'+encodeURIComponent(userId)+'?serverId='+encodeURIComponent(serverId),{method:'DELETE'});
+    if(state.me?.id!==accountId||state.activeServerId!==serverId)return;
+    toast(member.displayName+' wurde vom Server entfernt.','success'); await loadAdminPanelData(); await refreshMembers();
+  } catch(e) {if(state.me?.id===accountId)toast(e.message,'error');}
 }
 async function adminDeleteMessage(id) {
+  const accountId=state.me?.id, serverId=state.activeServerId;
   const message=state.adminData?.messages.find(m=>m.id===id);
   if(!message||!confirm('Diese Nachricht als Moderator löschen?')) return;
-  try { await api('/api/admin/messages/'+encodeURIComponent(id)+'?serverId='+encodeURIComponent(state.activeServerId),{method:'DELETE'}); const next=state.messages.filter(m=>m.id!==id); if(next.length!==state.messages.length){state.messages=next;markMessagesChanged();} toast('Nachricht moderiert gelöscht.','success'); await loadAdminPanelData(); render(); }
-  catch(e) { toast(e.message,'error'); }
+  try {
+    await api('/api/admin/messages/'+encodeURIComponent(id)+'?serverId='+encodeURIComponent(serverId),{method:'DELETE'});
+    if(state.me?.id!==accountId||state.activeServerId!==serverId)return;
+    const next=state.messages.filter(m=>m.id!==id);if(next.length!==state.messages.length){state.messages=next;markMessagesChanged();}
+    toast('Nachricht moderiert gelöscht.','success'); await loadAdminPanelData(); render();
+  } catch(e) {if(state.me?.id===accountId)toast(e.message,'error');}
 }
 async function saveAdminServer(form) {
-  const body=Object.fromEntries(new FormData(form).entries());
+  const accountId=state.me?.id, serverId=state.activeServerId, body=Object.fromEntries(new FormData(form).entries());
   try {
-    const data=await api('/api/admin/server/'+encodeURIComponent(state.activeServerId),{method:'PATCH',body});
+    const data=await api('/api/admin/server/'+encodeURIComponent(serverId),{method:'PATCH',body});
+    if(state.me?.id!==accountId||state.activeServerId!==serverId)return;
     state.servers=state.servers.map(s=>s.id===data.server.id?data.server:s);
     toast('Servereinstellungen gespeichert.','success');
     await loadAdminPanelData();
-  } catch(e) { toast(e.message,'error'); }
+  } catch(e) {if(state.me?.id===accountId)toast(e.message,'error');}
 }
 function startLiveSync() {
   if(liveSyncTimer) clearInterval(liveSyncTimer);
@@ -927,7 +941,12 @@ function handleKeydown(event) {
 }
 async function maybeJoinFromInvite() {
   const params=new URLSearchParams(location.search);const invite=params.get('invite');if(!invite||!state.me)return;
-  try{const d=await api('/api/servers/join',{method:'POST',body:{inviteCode:invite}});if(!state.servers.some(s=>s.id===d.server.id))state.servers.push(d.server);state.channels=state.channels.filter(c=>c.serverId!==d.server.id).concat(d.channels);state.mode='channel';state.activeServerId=d.server.id;state.activeChannelId=d.channels.find(c=>c.kind==='text')?.id||d.channels[0]?.id;history.replaceState({},'',location.pathname);await refreshView();toast(`Du bist ${d.server.name} beigetreten.`,'success');}catch(e){toast(e.message,'error');}
+  const userId=state.me.id;
+  try {
+    const d=await api('/api/servers/join',{method:'POST',body:{inviteCode:invite}});
+    if(state.me?.id!==userId)return;
+    if(!state.servers.some(s=>s.id===d.server.id))state.servers.push(d.server);state.channels=state.channels.filter(c=>c.serverId!==d.server.id).concat(d.channels);state.mode='channel';state.activeServerId=d.server.id;state.activeChannelId=d.channels.find(c=>c.kind==='text')?.id||d.channels[0]?.id;history.replaceState({},'',location.pathname);await refreshView();toast(`Du bist ${d.server.name} beigetreten.`,'success');
+  } catch(e) {if(state.me?.id===userId)toast(e.message,'error');}
 }
 
 document.addEventListener('click',handleClick);
