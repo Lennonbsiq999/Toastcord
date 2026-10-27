@@ -767,8 +767,8 @@ async function startVoice(channelId) {
   }
 }
 async function enableVoiceMicrophone() {
-  const channelId=state.voiceChannelId;
-  if(!channelId)return;
+  const userId=state.me?.id, channelId=state.voiceChannelId, joinToken=voiceJoinSequence;
+  if(!userId||!channelId)return;
   const localHost=['localhost','127.0.0.1','::1'].includes(location.hostname.toLowerCase());
   if(!navigator.mediaDevices?.getUserMedia||(!window.isSecureContext&&!localHost)) {
     state.voiceNotice='Mikrofon-Audio benötigt HTTPS. Öffne Toastcord über eine HTTPS-Adresse.';
@@ -777,13 +777,14 @@ async function enableVoiceMicrophone() {
   let stream;
   try {
     stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
-    if(state.voiceChannelId!==channelId){stream.getTracks().forEach(t=>t.stop());return;}
+    if(state.me?.id!==userId||state.voiceChannelId!==channelId||voiceJoinSequence!==joinToken){stream.getTracks().forEach(t=>t.stop());return;}
     state.localStream=stream;state.muted=false;state.voiceNotice='';
     for(const [key,entry] of state.peerConnections)if(key.startsWith(`${channelId}:`))for(const track of stream.getTracks())entry.pc.addTrack(track,stream);
     syncVoicePeers(state.voiceParticipants[channelId]||[]);
     render();toast('Mikrofon verbunden.','success');
   } catch(e) {
     stream?.getTracks().forEach(t=>t.stop());
+    if(state.me?.id!==userId||state.voiceChannelId!==channelId||voiceJoinSequence!==joinToken)return;
     state.voiceNotice=e.name==='NotAllowedError'
       ? 'Mikrofonzugriff wurde blockiert. Erlaube ihn in den Browser-Einstellungen.'
       : `Mikrofon konnte nicht aktiviert werden: ${e.message||e.name}`;
@@ -792,21 +793,28 @@ async function enableVoiceMicrophone() {
 }
 function ensurePeer(userId,channelId) {
   const key=`${channelId}:${userId}`;let entry=state.peerConnections.get(key);if(entry)return entry;
+  if(!state.me||state.voiceChannelId!==channelId)return null;
+  const accountId=state.me.id, joinToken=voiceJoinSequence;
   const pc=new RTCPeerConnection({iceServers:state.iceServers});
-  entry={pc,polite:String(state.me.id).localeCompare(String(userId))>0,makingOffer:false,ignoreOffer:false,settingRemoteAnswerPending:false};state.peerConnections.set(key,entry);
+  entry={pc,polite:String(state.me.id).localeCompare(String(userId))>0,makingOffer:false,ignoreOffer:false,settingRemoteAnswerPending:false};
+  state.peerConnections.set(key,entry);
+  const isCurrent=()=>state.me?.id===accountId&&state.voiceChannelId===channelId&&voiceJoinSequence===joinToken&&state.peerConnections.get(key)===entry;
   if(state.localStream)for(const track of state.localStream.getTracks())pc.addTrack(track,state.localStream);
   if(state.screenStream)for(const track of state.screenStream.getTracks())pc.addTrack(track,state.screenStream);
-  pc.onicecandidate=event=>{if(event.candidate)sendWs({type:'rtc_signal',channelId,targetUserId:userId,signal:{candidate:event.candidate}});};
+  pc.onicecandidate=event=>{if(isCurrent()&&event.candidate)sendWs({type:'rtc_signal',channelId,targetUserId:userId,signal:{candidate:event.candidate}});};
   pc.ontrack=event=>{
+    if(!isCurrent())return;
     let stream=state.remoteStreams.get(userId);if(!stream){stream=new MediaStream();state.remoteStreams.set(userId,stream);}
     if(!stream.getTracks().some(t=>t.id===event.track.id))stream.addTrack(event.track);
-    event.track.onended=()=>{const s=state.remoteStreams.get(userId);if(s){s.removeTrack(event.track);render();}};
+    event.track.onended=()=>{if(!isCurrent())return;const s=state.remoteStreams.get(userId);if(s){s.removeTrack(event.track);render();}};
     render();
   };
   pc.onnegotiationneeded=async()=>{
-    try{entry.makingOffer=true;await pc.setLocalDescription();sendWs({type:'rtc_signal',channelId,targetUserId:userId,signal:{description:pc.localDescription}});}catch(e){console.debug('Negotiation error',e);}finally{entry.makingOffer=false;}
+    if(!isCurrent())return;
+    try{entry.makingOffer=true;await pc.setLocalDescription();if(!isCurrent())return;sendWs({type:'rtc_signal',channelId,targetUserId:userId,signal:{description:pc.localDescription}});}
+    catch(e){if(isCurrent())console.debug('Negotiation error',e);}finally{entry.makingOffer=false;}
   };
-  pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(pc.connectionState)){console.debug('Peer connection',pc.connectionState,userId);}};
+  pc.onconnectionstatechange=()=>{if(isCurrent()&&['failed','closed'].includes(pc.connectionState)){console.debug('Peer connection',pc.connectionState,userId);}};
   state.pendingIce.set(key,state.pendingIce.get(key)||[]);
   return entry;
 }
@@ -817,20 +825,36 @@ function syncVoicePeers(participants) {
   for(const [key,entry] of [...state.peerConnections.entries()])if(key.startsWith(`${state.voiceChannelId}:`)&&!ids.has(key)){entry.pc.close();state.peerConnections.delete(key);state.remoteStreams.delete(key.slice(state.voiceChannelId.length+1));state.pendingIce.delete(key);}
 }
 async function handleRtcSignal(msg) {
-  if(msg.channelId!==state.voiceChannelId || !state.me)return;
-  const entry=ensurePeer(msg.fromUserId,msg.channelId);const pc=entry.pc;const signal=msg.signal||{};
+  const accountId=state.me?.id, channelId=msg.channelId, fromUserId=msg.fromUserId, joinToken=voiceJoinSequence;
+  if(!accountId||channelId!==state.voiceChannelId)return;
+  const entry=ensurePeer(fromUserId,channelId);if(!entry)return;
+  const pc=entry.pc, signal=msg.signal||{}, key=`${channelId}:${fromUserId}`;
+  const isCurrent=()=>state.me?.id===accountId&&state.voiceChannelId===channelId&&voiceJoinSequence===joinToken&&state.peerConnections.get(key)===entry;
   if(signal.description){
     const description=signal.description;
     const readyForOffer=!entry.makingOffer&&(pc.signalingState==='stable'||entry.settingRemoteAnswerPending);
     const collision=description.type==='offer'&&!readyForOffer;
     entry.ignoreOffer=!entry.polite&&collision;if(entry.ignoreOffer)return;
     entry.settingRemoteAnswerPending=description.type==='answer';
-    try{if(collision&&entry.polite)await Promise.all([pc.setLocalDescription({type:'rollback'}),pc.setRemoteDescription(description)]);else await pc.setRemoteDescription(description);}finally{entry.settingRemoteAnswerPending=false;}
-    if(description.type==='offer'){await pc.setLocalDescription(await pc.createAnswer());sendWs({type:'rtc_signal',channelId:msg.channelId,targetUserId:msg.fromUserId,signal:{description:pc.localDescription}});}
-    const key=`${msg.channelId}:${msg.fromUserId}`;for(const candidate of state.pendingIce.get(key)||[])await pc.addIceCandidate(candidate).catch(()=>{});state.pendingIce.set(key,[]);
-  } else if(signal.candidate) {
-    if(pc.remoteDescription)await pc.addIceCandidate(signal.candidate).catch(e=>{if(!entry.ignoreOffer)console.debug('ICE candidate failed',e);});
-    else {const key=`${msg.channelId}:${msg.fromUserId}`;const q=state.pendingIce.get(key)||[];q.push(signal.candidate);state.pendingIce.set(key,q);}
+    try{
+      if(collision&&entry.polite)await Promise.all([pc.setLocalDescription({type:'rollback'}),pc.setRemoteDescription(description)]);
+      else await pc.setRemoteDescription(description);
+    } finally {entry.settingRemoteAnswerPending=false;}
+    if(!isCurrent())return;
+    if(description.type==='offer'){
+      await pc.setLocalDescription(await pc.createAnswer());
+      if(!isCurrent())return;
+      sendWs({type:'rtc_signal',channelId,targetUserId:fromUserId,signal:{description:pc.localDescription}});
+    }
+    for(const candidate of state.pendingIce.get(key)||[]){
+      if(!isCurrent())return;
+      await pc.addIceCandidate(candidate).catch(()=>{});
+    }
+    if(isCurrent())state.pendingIce.set(key,[]);
+  } else if(signal.candidate){
+    if(!isCurrent())return;
+    if(pc.remoteDescription)await pc.addIceCandidate(signal.candidate).catch(e=>{if(isCurrent()&&!entry.ignoreOffer)console.debug('ICE candidate failed',e);});
+    else {const q=state.pendingIce.get(key)||[];q.push(signal.candidate);state.pendingIce.set(key,q);}
   }
 }
 function attachRemoteMedia() {
@@ -850,14 +874,17 @@ function stopScreenShare() {
 }
 async function toggleScreenShare() {
   if(state.screenStream){stopScreenShare();return;}
+  if(!state.me||!state.voiceChannelId){toast('Tritt zuerst einem Sprachkanal bei.','error');return;}
   if(!navigator.mediaDevices?.getDisplayMedia){toast('Bildschirmfreigabe wird von diesem Browser nicht unterstützt.','error');return;}
+  const userId=state.me.id, channelId=state.voiceChannelId, joinToken=voiceJoinSequence;
   try{
     const stream=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:15,max:30}},audio:false});
+    if(state.me?.id!==userId||state.voiceChannelId!==channelId||voiceJoinSequence!==joinToken){stream.getTracks().forEach(t=>t.stop());return;}
     state.screenStream=stream;
-    for(const {pc} of state.peerConnections.values())for(const track of stream.getTracks())pc.addTrack(track,stream);
-    const videoTrack=stream.getVideoTracks()[0];if(videoTrack)videoTrack.onended=()=>{if(state.screenStream===stream)stopScreenShare();};
+    for(const [key,entry] of state.peerConnections)if(key.startsWith(`${channelId}:`))for(const track of stream.getTracks())entry.pc.addTrack(track,stream);
+    const videoTrack=stream.getVideoTracks()[0];if(videoTrack)videoTrack.onended=()=>{if(state.me?.id===userId&&state.voiceChannelId===channelId&&state.screenStream===stream)stopScreenShare();};
     render();
-  } catch(e){toast(`Bildschirmfreigabe abgebrochen: ${e.message}`,'error');}
+  } catch(e){if(state.me?.id===userId&&state.voiceChannelId===channelId)toast(`Bildschirmfreigabe abgebrochen: ${e.message}`,'error');}
 }
 function leaveVoice(notify=true) {
   ++voiceJoinSequence;
