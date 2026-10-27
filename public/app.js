@@ -103,7 +103,7 @@ function renderChannelPanel() {
   return `<aside class="channel-panel">
     <div class="channel-head"><strong>${esc(server?.name || 'Toastcord')}</strong>${canManage?'<button class="icon-button admin-shortcut" data-action="admin-panel" title="Admin-Panel">⚙</button>':''}<button class="icon-button" data-action="server-menu" title="Server">⌄</button></div>
     <div class="channel-scroll">
-      <div class="channel-about"><div class="server-name">${esc(server?.name || 'Community')}</div><p>${esc(server?.description || 'Dein Raum für Gespräche und gemeinsame Projekte.')}</p><div class="server-quick-actions"><button class="small-action" data-action="invite">Einladung teilen ↗</button><button class="small-action admin-launch" data-action="admin-panel">⚙ Admin-Panel öffnen</button></div><small class="build-version">Build 27.10.2026-2 · Chat, Voice & Admin Fixes</small></div>
+      <div class="channel-about"><div class="server-name">${esc(server?.name || 'Community')}</div><p>${esc(server?.description || 'Dein Raum für Gespräche und gemeinsame Projekte.')}</p><div class="server-quick-actions"><button class="small-action" data-action="invite">Einladung teilen ↗</button><button class="small-action admin-launch" data-action="admin-panel">⚙ Admin-Panel öffnen</button></div><small class="build-version">Build 27.10.2026-3 · Chat, Voice, Sessions & Admin</small></div>
       <div class="group-label">Textkanäle ${canManage?'<button data-action="modal" data-modal="create-channel" data-kind="text" title="Textkanal hinzufügen">+</button>':''}</div>
       ${text.map(c=>`<div class="channel-row ${c.id===state.activeChannelId?'active':''}" data-action="channel" data-id="${esc(c.id)}"><span class="ch-icon">#</span><span class="ch-name">${esc(c.name)}</span><span class="ch-more">···</span></div>`).join('') || '<div class="members-empty">Noch keine Textkanäle.</div>'}
       <div class="group-label" style="margin-top:15px">Sprachkanäle ${canManage?'<button data-action="modal" data-modal="create-channel" data-kind="voice" title="Sprachkanal hinzufügen">+</button>':''}</div>
@@ -846,11 +846,12 @@ async function handleRtcSignal(msg) {
       if(!isCurrent())return;
       sendWs({type:'rtc_signal',channelId,targetUserId:fromUserId,signal:{description:pc.localDescription}});
     }
-    for(const candidate of state.pendingIce.get(key)||[]){
+    const queuedCandidates=state.pendingIce.get(key)||[];
+    state.pendingIce.set(key,[]);
+    for(const candidate of queuedCandidates){
       if(!isCurrent())return;
       await pc.addIceCandidate(candidate).catch(()=>{});
     }
-    if(isCurrent())state.pendingIce.set(key,[]);
   } else if(signal.candidate){
     if(!isCurrent())return;
     if(pc.remoteDescription)await pc.addIceCandidate(signal.candidate).catch(e=>{if(isCurrent()&&!entry.ignoreOffer)console.debug('ICE candidate failed',e);});
