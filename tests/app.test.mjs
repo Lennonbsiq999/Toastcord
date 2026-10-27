@@ -450,6 +450,7 @@ test('local member can recover the admin panel from the same PC', async () => {
     });
     const first=await register('RecoveryOwner');
     assert.equal(first.status,201);
+    const ownerCookie=first.headers.get('set-cookie').split(';')[0];
     const second=await register('RecoveryMember');
     assert.equal(second.status,201);
     const cookie=second.headers.get('set-cookie').split(';')[0];
