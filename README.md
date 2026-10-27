@@ -16,7 +16,7 @@ Fertig. Dein Browser öffnet Toastcord automatisch.
 - Der Starter sucht automatisch einen freien Port zwischen 3000 und 3010. So öffnet er bei einer noch laufenden alten Instanz die neue Version auf einem anderen Port.
 - Nachrichten und Konten werden im Ordner `data` gespeichert.
 
-- Beim lokalen Start wird das erste registrierte Konto zum Owner von „Toast Zone“. Falls dein Konto lokal keine Admin-Rechte hat, öffne „Admin-Panel öffnen“ und wähle „Lokalen Server als Owner übernehmen“. Diese Wiederherstellung ist nur vom selben PC in einer lokalen Installation erlaubt. Bei Online-Deployments wird kein Admin-Zugriff automatisch vergeben.
+- Beim lokalen Start wird das erste registrierte Konto zum Owner von „Toast Zone“. Falls dein Konto in der lokalen Standard-Community keine Admin-Rechte hat, öffne „Admin-Panel öffnen“ und wähle „Lokalen Server als Owner übernehmen“. Diese Wiederherstellung gilt ausschließlich für „Toast Zone“ und ist nur vom selben PC in einer lokalen Installation erlaubt. Bei Online-Deployments wird kein Admin-Zugriff automatisch vergeben.
 
 ## Sprachkanäle: wichtig für Audio
 
