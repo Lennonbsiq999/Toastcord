@@ -633,7 +633,7 @@ async function logout() {
   state.me=null;state.servers=[];state.channels=[];state.members=[];state.messages=[];state.threads=[];state.voiceParticipants={};
   state.adminData=null;state.adminLoading=false;state.adminError='';state.localMode=false;
   state.activeServerId='toast-zone';state.activeChannelId='ch-general';state.activeThreadId='';state.mode='channel';
-  state.modal='';state.modalData={};state.draft='';state.messageSearch='';state.messageSearch='';pendingSubmit=false;
+  state.modal='';state.modalData={};state.draft='';state.messageSearch='';pendingSubmit=false;
   state.wsIntentionalClose=false;
   renderAuth();
   await logoutRequest;
