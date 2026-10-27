@@ -206,6 +206,15 @@ function sendVoiceState(store, serverId, channelId) {
   const participants = store.state.voiceSessions.filter(s => s.channelId === channelId).map(s => ({ userId: s.userId, displayName: store.userById(s.userId)?.displayName || 'Mitglied', channelId: s.channelId }));
   broadcast({ type: 'voice_state', serverId, channelId, participants }, c => c.userId && store.isMember(serverId, c.userId));
 }
+function canAccessMessage(store, userId, message) {
+  if (!message) return false;
+  if (message.threadId) {
+    const thread = store.state.threads.find(t => t.id === message.threadId);
+    return !!thread && thread.participants.includes(userId);
+  }
+  const channel = store.state.channels.find(c => c.id === message.channelId && c.kind === 'text');
+  return !!channel && store.isMember(channel.serverId, userId);
+}
 function recordAdminAction(store, { serverId, actorId, action, targetId = '', details = '' }) {
   store.state.auditLog ||= [];
   store.state.auditLog.push({ id: newId('audit_'), serverId, actorId, action, targetId, details: String(details).slice(0, 240), createdAt: Date.now() });
@@ -675,20 +684,22 @@ export function createAppServer(options = {}) {
         }
         const messagesMatch=pathname.match(/^\/api\/messages\/([^/]+)$/);
         if (messagesMatch && req.method === 'PATCH') {
-          const message=store.state.messages.find(m=>m.id===messagesMatch[1]);
+          const message=store.state.messages.find(m=>m.id===messagesMatch[1]&&!m.deleted);
           if(!message||message.authorId!==user.id){sendError(res,404,'Nachricht nicht gefunden.');return;}
+          if(!canAccessMessage(store,user.id,message)){sendError(res,403,'Du hast keinen Zugriff mehr auf diesen Nachrichtenkanal.');return;}
           const body=await readBody(req); const text=sanitizeMessage(body.text); if(!text){sendError(res,400,'Nachricht darf nicht leer sein.');return;}
           store.update(state=>{message.text=text;message.editedAt=Date.now();}); const safe=store.safeMessage(message);
           if(message.threadId){const thread=store.state.threads.find(t=>t.id===message.threadId);broadcast({type:'message_update',threadId:message.threadId,message:safe},c=>!!thread?.participants.includes(c.userId));}
-          else broadcast({type:'message_update',channelId:message.channelId,message:safe},c=>c.userId===user.id||store.isMember(store.state.channels.find(ch=>ch.id===message.channelId)?.serverId,c.userId));
+          else broadcast({type:'message_update',channelId:message.channelId,message:safe},c=>store.isMember(store.state.channels.find(ch=>ch.id===message.channelId)?.serverId,c.userId));
           sendJson(res,200,{message:safe}); return;
         }
         if (messagesMatch && req.method === 'DELETE') {
-          const message=store.state.messages.find(m=>m.id===messagesMatch[1]);
+          const message=store.state.messages.find(m=>m.id===messagesMatch[1]&&!m.deleted);
           if(!message||message.authorId!==user.id){sendError(res,404,'Nachricht nicht gefunden.');return;}
+          if(!canAccessMessage(store,user.id,message)){sendError(res,403,'Du hast keinen Zugriff mehr auf diesen Nachrichtenkanal.');return;}
           store.update(state=>{message.deleted=true;message.deletedAt=Date.now();});
           if(message.threadId){const thread=store.state.threads.find(t=>t.id===message.threadId);broadcast({type:'message_delete',threadId:message.threadId,messageId:message.id},c=>!!thread?.participants.includes(c.userId));}
-          else broadcast({type:'message_delete',channelId:message.channelId,messageId:message.id},c=>c.userId===user.id||store.isMember(store.state.channels.find(ch=>ch.id===message.channelId)?.serverId,c.userId));
+          else broadcast({type:'message_delete',channelId:message.channelId,messageId:message.id},c=>store.isMember(store.state.channels.find(ch=>ch.id===message.channelId)?.serverId,c.userId));
           sendJson(res,200,{ok:true}); return;
         }
         if (pathname === '/api/members' && req.method === 'GET') {
