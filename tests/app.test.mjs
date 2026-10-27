@@ -161,6 +161,10 @@ test('server creation, access control, invite join and members', async () => {
   const created = await request('/api/servers', { method:'POST', cookie:cookieA, body:{name:'Test Community', description:'Integrationstest'} });
   assert.equal(created.status, 201, JSON.stringify(created.json));
   serverId = created.json.server.id;
+  const privateVoiceChannel = created.json.channels.find(c => c.kind === 'voice');
+  assert.ok(privateVoiceChannel);
+  const voiceJoined = await request('/api/voice/join',{method:'POST',cookie:cookieA,body:{channelId:privateVoiceChannel.id}});
+  assert.equal(voiceJoined.status,200,JSON.stringify(voiceJoined.json));
   const channel = await request(`/api/servers/${encodeURIComponent(serverId)}/channels`, { method:'POST', cookie:cookieA, body:{name:'general-chat',kind:'text'} });
   assert.equal(channel.status, 201, JSON.stringify(channel.json));
   customChannelId = channel.json.channel.id;
@@ -168,6 +172,12 @@ test('server creation, access control, invite join and members', async () => {
   assert.equal(registerB.status, 201, JSON.stringify(registerB.json));
   cookieB = registerB.cookie;
   userB = registerB.json.user;
+  const privateBootstrap = await request('/api/bootstrap',{cookie:cookieB});
+  assert.equal(privateBootstrap.status,200);
+  assert.ok(!(privateBootstrap.json.voiceSessions||[]).some(session=>session.serverId===serverId),'Voice presence from servers without membership must not leak through bootstrap.');
+  assert.ok(!(privateBootstrap.json.voiceSessions||[]).some(session=>'connectionId' in session),'Internal WebSocket identifiers must never be sent to clients.');
+  const leftPrivateVoice = await request('/api/voice/leave',{method:'POST',cookie:cookieA,body:{channelId:privateVoiceChannel.id}});
+  assert.equal(leftPrivateVoice.status,200);
   const deniedBeforeJoin = await request(`/api/messages?channelId=${encodeURIComponent(customChannelId)}`, { cookie:cookieB });
   assert.equal(deniedBeforeJoin.status, 403);
   const join = await request('/api/servers/join', { method:'POST', cookie:cookieB, body:{inviteCode:created.json.server.inviteCode} });
