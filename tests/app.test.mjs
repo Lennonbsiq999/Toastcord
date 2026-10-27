@@ -458,6 +458,12 @@ test('local member can recover the admin panel from the same PC', async () => {
     assert.equal(boot.servers.find(s=>s.id==='toast-zone').role,'member');
     const denied=await fetch(localBase+'/api/admin/overview?serverId=toast-zone',{headers:{Cookie:cookie}});
     assert.equal(denied.status,403);
+    const custom=await fetch(localBase+'/api/servers',{method:'POST',headers:{'Content-Type':'application/json',Cookie:ownerCookie},body:JSON.stringify({name:'Custom Local Server'})});
+    assert.equal(custom.status,201,await custom.text());
+    const customJoin=await fetch(localBase+'/api/servers/join',{method:'POST',headers:{'Content-Type':'application/json',Cookie},body:JSON.stringify({inviteCode:custom.json?.server?.inviteCode})});
+    assert.equal(customJoin.status,200,await customJoin.text());
+    const customClaim=await fetch(localBase+'/api/local/claim-owner',{method:'POST',headers:{'Content-Type':'application/json',Cookie},body:JSON.stringify({serverId:custom.json.server.id})});
+    assert.equal(customClaim.status,403,'Local recovery must not let a member take over a custom server.');
     const claim=await fetch(localBase+'/api/local/claim-owner',{
       method:'POST',headers:{'Content-Type':'application/json',Cookie:cookie},
       body:JSON.stringify({serverId:'toast-zone'})
@@ -493,6 +499,7 @@ test('admin panel renderer returns HTML synchronously for renderModal', () => {
   assert.match(appSource, /state.localMode=!!data.localMode/);
   assert.ok(appSource.includes("msg.type==='member_update'||msg.type==='threads_update'"));
   assert.ok(appSource.includes('state.threads=d.threads||[]'));
+  assert.ok(appSource.includes("state.localMode && currentServer()?.id==='toast-zone'"));
   assert.ok(appSource.includes('const requestId=++viewLoadSequence;'));
   assert.ok(appSource.includes('state.activeChannelId===channelId'));
   assert.ok(appSource.includes("if(serverJoined)await api('/api/voice/leave'"));
