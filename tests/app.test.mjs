@@ -478,7 +478,10 @@ test('admin panel renderer returns HTML synchronously for renderModal', () => {
   assert.ok(appSource.includes('data-action="voice-enable-mic"'));
   assert.ok(appSource.includes('if(!canCapture)'));
   assert.ok(appSource.includes('state.voiceChannelId=channelId;state.muted=!mediaStream;state.voiceNotice=microphoneNotice;'));
-  assert.ok(appSource.includes('Build 26.10.26-2'));
+  assert.ok(appSource.includes('Build 27.10.2026-1 · Admin & Voice Fixes'));
+  const htmlSource=fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.ok(htmlSource.includes('/app.js?v=2026-10-27-1'));
+  assert.ok(htmlSource.includes('/app.css?v=2026-10-27-1'));
   const launcherSource = fs.readFileSync(new URL('../Start-Toastcord.bat', import.meta.url), 'utf8');
   assert.match(launcherSource, /:choose_port/);
   assert.ok(launcherSource.includes('$p=%PORT%'));
