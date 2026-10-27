@@ -14,9 +14,10 @@ const state = {
   onlineIds: new Set(), messageSearch: '', reactionTargetMessageId: '',
   adminData: null, adminLoading: false, adminError: '', localMode: false,
 };
-let liveSyncTimer = null, liveMessageSyncBusy = false, liveVoiceSyncBusy = false, lastVoiceSyncAt = 0;
+let liveSyncTimer = null, liveMessageSyncBusy = false, liveVoiceSyncBusy = false, lastVoiceSyncAt = 0, messageMutationSequence = 0;
 const REACTION_EMOJIS = ['👍','❤️','😂','🔥','🎉','🍞','👀','🤔','💀','🚀'];
 let pendingSubmit = false, viewLoadSequence = 0, memberLoadSequence = 0, bootstrapLoadSequence = 0, voiceJoinSequence = 0;
+function markMessagesChanged() { messageMutationSequence += 1; }
 
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -272,7 +273,7 @@ async function kickAdminMember(userId) {
 async function adminDeleteMessage(id) {
   const message=state.adminData?.messages.find(m=>m.id===id);
   if(!message||!confirm('Diese Nachricht als Moderator löschen?')) return;
-  try { await api('/api/admin/messages/'+encodeURIComponent(id)+'?serverId='+encodeURIComponent(state.activeServerId),{method:'DELETE'}); state.messages=state.messages.filter(m=>m.id!==id); toast('Nachricht moderiert gelöscht.','success'); await loadAdminPanelData(); render(); }
+  try { await api('/api/admin/messages/'+encodeURIComponent(id)+'?serverId='+encodeURIComponent(state.activeServerId),{method:'DELETE'}); const next=state.messages.filter(m=>m.id!==id); if(next.length!==state.messages.length){state.messages=next;markMessagesChanged();} toast('Nachricht moderiert gelöscht.','success'); await loadAdminPanelData(); render(); }
   catch(e) { toast(e.message,'error'); }
 }
 async function saveAdminServer(form) {
@@ -300,16 +301,21 @@ async function syncLiveMessages() {
   if(mode==='dm'&&!thread)return;
   if(mode==='channel'&&channel?.kind!=='text')return;
   const id=mode==='dm'?thread.id:channel.id;
+  const viewVersion=viewLoadSequence;
+  const mutationVersion=messageMutationSequence;
   liveMessageSyncBusy=true;
   try {
     const d=mode==='dm'
       ? await api('/api/dm/messages?threadId='+encodeURIComponent(id))
       : await api('/api/messages?channelId='+encodeURIComponent(id));
-    // A slow response from the previous view must never overwrite the currently open chat.
-    if(state.mode!==mode || (mode==='dm'?state.activeThreadId!==id:state.activeChannelId!==id))return;
+    // Never let an old REST snapshot erase a message received over WebSocket or a local edit.
+    if(state.mode!==mode ||
+      (mode==='dm'?state.activeThreadId!==id:state.activeChannelId!==id) ||
+      viewLoadSequence!==viewVersion || messageMutationSequence!==mutationVersion) return;
     const next=d.messages||[];
     if(!sameMessages(state.messages,next)) {
       state.messages=next;
+      markMessagesChanged();
       if(!state.modal)render();
     }
   } catch(e) { console.debug('Live message sync failed; retrying',e); }
@@ -377,23 +383,29 @@ async function boot() {
 async function refreshView() {
   const requestId=++viewLoadSequence;
   const mode=state.mode, serverId=state.activeServerId, channelId=state.activeChannelId, threadId=state.activeThreadId;
+  const mutationVersion=messageMutationSequence;
   const stillCurrent=()=>requestId===viewLoadSequence && state.mode===mode &&
     (mode==='dm' ? state.activeThreadId===threadId : state.activeServerId===serverId && state.activeChannelId===channelId);
+  const retryIfMutated=()=>messageMutationSequence!==mutationVersion;
+  const applyMessages=messages=>{state.messages=messages;markMessagesChanged();};
   if(mode==='dm') {
     const thread=state.threads.find(t=>t.id===threadId);
     if(thread) {
       try {
         const data=await api(`/api/dm/messages?threadId=${encodeURIComponent(thread.id)}`);
         if(!stillCurrent())return;
-        state.messages=data.messages||[];
+        if(retryIfMutated())return refreshView();
+        applyMessages(data.messages||[]);
       } catch(e) {
         if(!stillCurrent())return;
-        state.messages=[];
+        if(retryIfMutated())return refreshView();
+        applyMessages([]);
         toast(`Direktnachrichten konnten nicht geladen werden: ${e.message}`,'error');
       }
     } else {
       if(!stillCurrent())return;
-      state.messages=[];
+      if(retryIfMutated())return refreshView();
+      applyMessages([]);
     }
   } else {
     const channel=state.channels.find(c=>c.id===channelId&&c.serverId===serverId);
@@ -402,15 +414,18 @@ async function refreshView() {
       try {
         const data=await api(`/api/messages?channelId=${encodeURIComponent(channel.id)}`);
         if(!stillCurrent())return;
-        state.messages=data.messages||[];
+        if(retryIfMutated())return refreshView();
+        applyMessages(data.messages||[]);
       } catch(e) {
         if(!stillCurrent())return;
-        state.messages=[];
+        if(retryIfMutated())return refreshView();
+        applyMessages([]);
         toast(`Nachrichten konnten nicht geladen werden: ${e.message}`,'error');
       }
     } else {
       if(!stillCurrent())return;
-      state.messages=[];
+      if(retryIfMutated())return refreshView();
+      applyMessages([]);
     }
   }
   if(!stillCurrent())return;
@@ -446,21 +461,30 @@ function sendWs(data) { if(state.ws?.readyState===WebSocket.OPEN)state.ws.send(J
 function handleWs(msg) {
   if(msg.type==='connected'){state.wsReady=true;if(!state.modal)render();return;}
   if(msg.type==='pong')return;
-  if(msg.type==='dm_message_new'&&state.mode==='dm'&&msg.threadId===state.activeThreadId){if(!state.messages.some(m=>m.id===msg.message.id))state.messages.push(msg.message);if(!state.modal)render();return;}
+  if(msg.type==='dm_message_new'&&state.mode==='dm'&&msg.threadId===state.activeThreadId){
+    if(!state.messages.some(m=>m.id===msg.message.id)){state.messages.push(msg.message);markMessagesChanged();}
+    if(!state.modal)render();return;
+  }
   if(msg.type==='message_new'&&state.mode==='channel'&&msg.channelId===state.activeChannelId) {
-    if(!state.messages.some(m=>m.id===msg.message.id))state.messages.push(msg.message);
+    if(!state.messages.some(m=>m.id===msg.message.id)){state.messages.push(msg.message);markMessagesChanged();}
     if(state.messages.length>200)state.messages=state.messages.slice(-200);
     if(!state.modal)render();return;
   }
   if(msg.type==='message_update') {
-    const i=state.messages.findIndex(m=>m.id===msg.message.id);if(i>=0)state.messages[i]=msg.message;if(!state.modal)render();return;
+    const i=state.messages.findIndex(m=>m.id===msg.message.id);
+    if(i>=0){state.messages[i]=msg.message;markMessagesChanged();}
+    if(!state.modal)render();return;
   }
   if(msg.type==='message_reaction') {
     const relevant = msg.channelId ? state.mode==='channel' && state.activeChannelId===msg.channelId : state.mode==='dm' && state.activeThreadId===msg.threadId;
-    if(relevant) { const i=state.messages.findIndex(m=>m.id===msg.message.id); if(i>=0){state.messages[i]=msg.message;if(!state.modal)render();} }
+    if(relevant) { const i=state.messages.findIndex(m=>m.id===msg.message.id); if(i>=0){state.messages[i]=msg.message;markMessagesChanged();if(!state.modal)render();} }
     return;
   }
-  if(msg.type==='message_delete') {state.messages=state.messages.filter(m=>m.id!==msg.messageId);if(!state.modal)render();return;}
+  if(msg.type==='message_delete') {
+    const next=state.messages.filter(m=>m.id!==msg.messageId);
+    if(next.length!==state.messages.length){state.messages=next;markMessagesChanged();}
+    if(!state.modal)render();return;
+  }
   if(msg.type==='member_update'||msg.type==='threads_update'||msg.type==='channel_update'||msg.type==='server_update') {loadBootstrapSoft();return;}
   if(msg.type==='profile_update'||msg.type==='presence_update') {refreshMembers().then(()=>{if(!state.modal)render();});return;}
   if(msg.type==='server_kicked') {
@@ -529,7 +553,7 @@ async function sendMessage(raw) {
     try {
       const d=await api('/api/dm/messages',{method:'POST',body:{threadId,text}});
       if(state.mode==='dm'&&state.activeThreadId===threadId) {
-        if(!state.messages.some(m=>m.id===d.message.id))state.messages.push(d.message);
+        if(!state.messages.some(m=>m.id===d.message.id)){state.messages.push(d.message);markMessagesChanged();}
         state.draft='';
         const input=$('#composer-input');if(input)input.value='';
         render();
@@ -549,7 +573,7 @@ async function sendMessage(raw) {
   try {
     const d=await api('/api/messages',{method:'POST',body:{channelId,text}});
     if(state.mode==='channel'&&state.activeServerId===serverId&&state.activeChannelId===channelId) {
-      if(!state.messages.some(m=>m.id===d.message.id))state.messages.push(d.message);
+      if(!state.messages.some(m=>m.id===d.message.id)){state.messages.push(d.message);markMessagesChanged();}
       state.draft='';
       const input=$('#composer-input');if(input)input.value='';
       render();
@@ -582,11 +606,11 @@ async function saveProfile(form) {
 }
 async function editMessage() {
   const msg=state.modalData.message; const text=$('#edit-text')?.value?.trim();if(!msg||!text)return;
-  try{const d=await api(`/api/messages/${encodeURIComponent(msg.id)}`,{method:'PATCH',body:{text}});const i=state.messages.findIndex(m=>m.id===msg.id);if(i>=0)state.messages[i]=d.message;state.modal='';render();toast('Nachricht bearbeitet.','success');}catch(e){modalError(e.message);}
+  try{const d=await api(`/api/messages/${encodeURIComponent(msg.id)}`,{method:'PATCH',body:{text}});const i=state.messages.findIndex(m=>m.id===msg.id);if(i>=0){state.messages[i]=d.message;markMessagesChanged();}state.modal='';render();toast('Nachricht bearbeitet.','success');}catch(e){modalError(e.message);}
 }
 async function deleteMessage(id) {
   if(!confirm('Diese Nachricht wirklich löschen?'))return;
-  try{await api(`/api/messages/${encodeURIComponent(id)}`,{method:'DELETE'});state.messages=state.messages.filter(m=>m.id!==id);render();}catch(e){toast(e.message,'error');}
+  try{await api(`/api/messages/${encodeURIComponent(id)}`,{method:'DELETE'});const next=state.messages.filter(m=>m.id!==id);if(next.length!==state.messages.length){state.messages=next;markMessagesChanged();}render();}catch(e){toast(e.message,'error');}
 }
 function toggleBookmark(id) {
   if(state.bookmarks.has(id))state.bookmarks.delete(id);else state.bookmarks.add(id);persistBookmarks();render();
@@ -595,7 +619,7 @@ async function toggleReaction(id, emoji) {
   if(!REACTION_EMOJIS.includes(emoji))return;
   try {
     const d=await api(`/api/messages/${encodeURIComponent(id)}/reactions`,{method:'POST',body:{emoji}});
-    const i=state.messages.findIndex(m=>m.id===id);if(i>=0)state.messages[i]=d.message;
+    const i=state.messages.findIndex(m=>m.id===id);if(i>=0){state.messages[i]=d.message;markMessagesChanged();}
     state.reactionTargetMessageId='';render();
   } catch(e) {toast(e.message,'error');}
 }
