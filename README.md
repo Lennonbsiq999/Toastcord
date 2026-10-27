@@ -18,6 +18,10 @@ Fertig. Dein Browser öffnet Toastcord automatisch.
 
 - Beim lokalen Start wird das erste registrierte Konto zum Owner von „Toast Zone“. Falls dein Konto lokal keine Admin-Rechte hat, öffne „Admin-Panel öffnen“ und wähle „Lokalen Server als Owner übernehmen“. Diese Wiederherstellung ist nur vom selben PC in einer lokalen Installation erlaubt. Bei Online-Deployments wird kein Admin-Zugriff automatisch vergeben.
 
+## Sprachkanäle: wichtig für Audio
+
+Beim Beitritt wird dein Anwesenheitsstatus auch dann geteilt, wenn der Browser das Mikrofon blockiert. Du erscheinst im Raum und kannst anschließend **„Mikrofon aktivieren“** nutzen. Mikrofon-Audio funktioniert im Browser nur über HTTPS oder auf `localhost`; bei einer gehosteten Version braucht die Website deshalb eine HTTPS-Adresse. Für manche Netzwerke kann der Host zusätzlich TURN konfigurieren.
+
 ## Wichtig
 
 Das startet Toastcord **auf deinem eigenen PC**. Damit Freunde über das Internet beitreten können, muss die App später auf einem Online-Server laufen.
