@@ -32,6 +32,9 @@ Chat mit gespeicherten Nachrichten, Konten, Server und Kanäle, Mitgliederliste,
 
 Über die immer sichtbare Schaltfläche **„Admin-Panel öffnen“** im Serverbereich gelangst du zur Verwaltung. Owner und Admins sehen dort Mitglieder- und Rollenverwaltung, Servereinstellungen, Nachrichtenmoderation, Live-Statistiken und Audit-Log. Nur der Owner darf Admin-Rechte vergeben oder entfernen. Entfernte Mitglieder verlieren den Kanalzugriff auch nach dem Neuladen.
 
+
+Die aktuelle Oberfläche zeigt die Versionskennung **Build 27.10.2026-2 · Chat, Voice & Admin Fixes** im Serverbereich an. Wenn dort eine ältere Kennung steht, läuft noch ein älterer Browser-Tab oder eine ältere lokale Instanz.
+
 ## Tests
 
 GitHub Actions prüft automatisch den Code und führt die Integrationstests aus.
